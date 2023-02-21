@@ -6,6 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "pyaprilaire"
 version = "0.1.2"
 readme = "README.md"
+dependencies = [
+    "crc >= 4"
+]
 
 [project.optional-dependencies]
 dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]

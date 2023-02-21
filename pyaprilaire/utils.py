@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from crc import Calculator, Configuration
 import math
 from typing import Any
 
-from .crc import generate_crc
 from .const import Action, FunctionalDomain
+
+crc_calculator = Calculator(
+    Configuration(
+        width=8,
+        polynomial=0x31,
+        init_value=0,
+        final_xor_value=0,
+        reverse_input=False,
+        reverse_output=False,
+    )
+)
 
 
 def encode_temperature(temperature: float) -> int:
@@ -66,6 +77,16 @@ def generate_command_bytes(
 def pad_list(lst: list[Any], length: int, pad: Any = 0):
     """Pad a list to a minimum length"""
     return lst + [pad] * (length - len(lst))
+
+
+def generate_crc(lst: list[int]):
+    """Generate a CRC checksum"""
+    return crc_calculator.checksum(bytes(lst))
+
+
+def verify_crc(lst: list[int], crc: int):
+    """Verify a CRC checksum"""
+    return crc_calculator.verify(bytes(lst), crc)
 
 
 def _encode_int_value(value: int):
