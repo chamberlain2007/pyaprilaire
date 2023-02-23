@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from crc import Calculator, Configuration
 from enum import Enum
 import math

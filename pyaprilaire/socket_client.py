@@ -13,8 +13,6 @@ from asyncio import (
 from asyncio.exceptions import CancelledError, InvalidStateError, TimeoutError
 from collections.abc import Callable
 from typing import Any
-import traceback
-import sys
 from logging import Logger
 
 
