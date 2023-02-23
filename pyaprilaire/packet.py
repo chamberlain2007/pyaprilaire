@@ -257,18 +257,6 @@ class Packet:
         self.raw_data = raw_data
 
     @classmethod
-    def decode_packet_header(self, data: bytes, data_index: int = 0):
-        """Read the header from a packet"""
-        try:
-            action = Action(int(data[data_index + 4]))
-            functional_domain = FunctionalDomain(int(data[data_index + 5]))
-            attribute = int(data[data_index + 6])
-        except ValueError:
-            return (Action.NONE, FunctionalDomain.NONE, 0)
-
-        return (action, functional_domain, attribute)
-
-    @classmethod
     def parse(self, data: bytes) -> list[Packet]:
         data_index = 0
 
