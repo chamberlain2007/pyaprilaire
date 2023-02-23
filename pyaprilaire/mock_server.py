@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
-from asyncio import Queue
+from asyncio import (
+    ensure_future,
+    new_event_loop,
+    set_event_loop,
+    sleep,
+    Queue,
+    Protocol,
+    Transport,
+)
 import logging
 
 from .const import Action, FunctionalDomain
-from .packet import decode_packet, decode_packet_header
-from .utils import encode_temperature, generate_command_bytes, pad_list
+from .packet import Packet
 
 COS_FREQUENCY = 30
 QUEUE_FREQUENCY = 0.5
@@ -51,9 +57,9 @@ ch.setFormatter(CustomFormatter())
 _LOGGER.addHandler(ch)
 
 
-class _AprilaireServerProtocol(asyncio.Protocol):
+class _AprilaireServerProtocol(Protocol):
     def __init__(self):
-        self.transport: asyncio.Transport = None
+        self.transport: Transport = None
 
         self.mode = 5
         self.fan_mode = 2
@@ -61,288 +67,368 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.heat_setpoint = 20
         self.hold = 0
 
-        self.name = "ttt12347"
-        self.location = "1234"
+        self.name = "Mock"
+        self.location = "02134"
 
-        self.queue = Queue()
+        self.packet_queue = Queue()
 
-        self.sequence = 1
+        self.sequence = 0
 
-    def _generate_thermostat_status_command_bytes(self):
-        heating_equipment_status = {2: 2, 4: 7}.get(self.mode, 0)
+    def _get_sequence(self):
+        """Get and increment the current sequence"""
+        self.sequence = (self.sequence + 1) % 128
 
-        cooling_equipment_status = {3: 2, 5: 2}.get(self.mode, 0)
+        return self.sequence
 
-        fan_status = 1 if self.fan_mode == 1 or self.fan_mode == 2 else 0
-
-        return generate_command_bytes(
-            self.sequence + 127,
-            Action.COS,
-            FunctionalDomain.STATUS,
-            6,
-            [heating_equipment_status, cooling_equipment_status, 0, fan_status],
-        )
-
-    async def send_status(self):
+    async def _send_status(self):
         """Send the current status"""
 
-        await self.queue.put(
-            generate_command_bytes(
-                self.sequence + 127,
+        await self.packet_queue.put(
+            Packet(
                 Action.READ_RESPONSE,
                 FunctionalDomain.IDENTIFICATION,
                 2,
-                [1, 2, 3, 4, 5, 6],
+                sequence=self._get_sequence(),
+                data={"mac_address": [1, 2, 3, 4, 5, 6]},
             )
         )
 
-        self.sequence = (self.sequence + 1) % 128
-
-        await self.queue.put(
-            generate_command_bytes(
-                self.sequence + 127,
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
                 1,
-                [
-                    self.mode,
-                    self.fan_mode,
-                    encode_temperature(self.heat_setpoint),
-                    encode_temperature(self.cool_setpoint),
-                ],
+                sequence=self._get_sequence(),
+                data={
+                    "mode": self.mode,
+                    "fan_mode": self.fan_mode,
+                    "heat_setpoint": self.heat_setpoint,
+                    "cool_setpoint": self.cool_setpoint,
+                },
             )
-            + generate_command_bytes(
-                self.sequence + 127,
+        )
+
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.CONTROL,
+                1,
+                sequence=self._get_sequence(),
+                data={
+                    "mode": self.mode,
+                    "fan_mode": self.fan_mode,
+                    "heat_setpoint": self.heat_setpoint,
+                    "cool_setpoint": self.cool_setpoint,
+                },
+            )
+        )
+
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.SENSORS,
                 2,
-                [0, encode_temperature(25), 0, encode_temperature(20), 0, 50, 0, 40],
+                sequence=self._get_sequence(),
+                data={
+                    "indoor_temperature_controlling_sensor_status": 0,
+                    "indoor_temperature_controlling_sensor_value": 25,
+                    "outdoor_temperature_controlling_sensor_status": 0,
+                    "outdoor_temperature_controlling_sensor_value": 25,
+                    "indoor_humidity_controlling_sensor_status": 0,
+                    "indoor_humidity_controlling_sensor_value": 50,
+                    "outdoor_humidity_controlling_sensor_status": 0,
+                    "outdoor_humidity_controlling_sensor_value": 40,
+                },
             )
-            + generate_command_bytes(
-                self.sequence + 127, Action.COS, FunctionalDomain.STATUS, 2, [1]
+        )
+
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.STATUS,
+                2,
+                sequence=self._get_sequence(),
+                data={
+                    "synced": 1,
+                },
             )
-            + generate_command_bytes(
-                self.sequence + 127,
+        )
+
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
                 7,
-                [2, 2, 2, 2],
+                sequence=self._get_sequence(),
+                data={
+                    "dehumidification_status": 2,
+                    "humidification_status": 2,
+                    "ventilation_status": 2,
+                    "air_cleaning_status": 2,
+                },
             )
-            + generate_command_bytes(
-                self.sequence + 127,
+        )
+
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
                 7,
-                [6, 1, 1, 1],
+                sequence=self._get_sequence(),
+                data={
+                    "thermostat_modes": 6,
+                    "air_cleaning_available": 1,
+                    "ventilation_available": 1,
+                    "dehumidification_available": 1,
+                    "humidification_available": 1,
+                },
             )
-            + generate_command_bytes(
-                self.sequence + 127,
+        )
+
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.SETUP,
                 1,
-                list([0] * 26) + [1] + list([0] * 17),
+                sequence=self._get_sequence(),
+                data={"away_available": 1},
             )
-            + generate_command_bytes(
-                self.sequence + 127,
+        )
+
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.SCHEDULING,
                 4,
-                [self.hold] + list([0] * 9),
+                sequence=self._get_sequence(),
+                data={"hold": self.hold},
             )
-            + generate_command_bytes(
-                self.sequence + 127,
+        )
+
+        await self.packet_queue.put(
+            Packet(
                 Action.COS,
                 FunctionalDomain.IDENTIFICATION,
                 1,
-                [66, 10, 2, 15, 1, 14, 3],
+                sequence=self._get_sequence(),
+                data={
+                    "hardware_revision": 66,
+                    "firmware_major_revision": 10,
+                    "firmware_minor_revision": 2,
+                    "protocol_major_revision": 15,
+                    "model_number": 1,
+                    "gainspan_firmware_major_revision": 14,
+                    "gainspan_firmware_minor_revision": 3,
+                },
             )
-            + generate_command_bytes(
-                self.sequence + 127,
-                Action.READ_RESPONSE,
-                FunctionalDomain.IDENTIFICATION,
-                4,
-                (
-                    pad_list([ord(c) for c in self.location], 8, 0)
-                    + pad_list([ord(c) for c in self.name], 16, 0)
-                ),
-            )
-            + self._generate_thermostat_status_command_bytes()
         )
 
-        self.sequence = (self.sequence + 1) % 128
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.IDENTIFICATION,
+                4,
+                sequence=self._get_sequence(),
+                data={
+                    "location": self.location,
+                    "name": self.name,
+                },
+            )
+        )
 
-    async def cos_loop(self):
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.STATUS,
+                6,
+                sequence=self._get_sequence(),
+                data={
+                    "heating_equipment_status": {2: 2, 4: 7}.get(self.mode, 0),
+                    "cooling_equipment_status": {3: 2, 5: 2}.get(self.mode, 0),
+                    "progressive_recovery": 0,
+                    "fan_status": 1 if self.fan_mode == 1 or self.fan_mode == 2 else 0,
+                },
+            )
+        )
+
+    async def _cos_loop(self):
         """Send the current status (COS) periodically"""
-        await asyncio.sleep(2)
+        await sleep(2)
 
         while self.transport:
-            await self.send_status()
-            await asyncio.sleep(COS_FREQUENCY)
+            await self._send_status()
+            await sleep(COS_FREQUENCY)
 
-    async def queue_loop(self):
+    async def _queue_loop(self):
         """Periodically send items from the queue"""
         while self.transport:
-            command_bytes = await self.queue.get()
+            try:
+                packet: Packet = await self.packet_queue.get()
+            except:
+                continue
 
             if self.transport:
-                _LOGGER.info("Sent data: %s", command_bytes.hex(" ", 1))
+                serialized_packet = packet.serialize()
 
-                self.transport.write(command_bytes)
+                _LOGGER.info("Sent data: %s", serialized_packet.hex(" "))
 
-            await asyncio.sleep(QUEUE_FREQUENCY)
+                self.transport.write(serialized_packet)
+
+            await sleep(QUEUE_FREQUENCY)
 
     def connection_made(self, transport):
         _LOGGER.info("Connection made")
 
         self.transport = transport
 
-        asyncio.ensure_future(self.cos_loop())
-        asyncio.ensure_future(self.queue_loop())
+        ensure_future(self._cos_loop())
+        ensure_future(self._queue_loop())
 
     def data_received(self, data: bytes) -> None:
         _LOGGER.info("Received data: %s", data.hex(" ", 1))
 
-        (action, functional_domain, attribute) = decode_packet_header(data)
+        parsed_packets = Packet.parse(data)
 
-        if action == Action.READ_REQUEST:
-            if functional_domain == FunctionalDomain.SENSORS:
-                if attribute == 2:
-                    self.queue.put_nowait(
-                        generate_command_bytes(
-                            self.sequence + 127,
-                            Action.READ_RESPONSE,
-                            FunctionalDomain.SENSORS,
-                            2,
-                            [
-                                0,
-                                encode_temperature(22),
-                                0,
-                                encode_temperature(10),
-                                0,
-                                50,
-                                0,
-                                40,
-                            ],
+        for packet in parsed_packets:
+            if packet.action == Action.READ_REQUEST:
+                if packet.functional_domain == FunctionalDomain.SENSORS:
+                    if packet.attribute == 2:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.SENSORS,
+                                2,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "indoor_temperature_controlling_sensor_status": 0,
+                                    "indoor_temperature_controlling_sensor_value": 25,
+                                    "outdoor_temperature_controlling_sensor_status": 0,
+                                    "outdoor_temperature_controlling_sensor_value": 25,
+                                    "indoor_humidity_controlling_sensor_status": 0,
+                                    "indoor_humidity_controlling_sensor_value": 50,
+                                    "outdoor_humidity_controlling_sensor_status": 0,
+                                    "outdoor_humidity_controlling_sensor_value": 40,
+                                },
+                            )
                         )
-                    )
-
-                    self.sequence = (self.sequence + 1) % 128
-            elif functional_domain == FunctionalDomain.SCHEDULING:
-                if attribute == 4:
-                    self.queue.put_nowait(
-                        generate_command_bytes(
-                            self.sequence + 127,
-                            Action.COS,
-                            FunctionalDomain.SCHEDULING,
-                            4,
-                            [self.hold] + list([0] * 9),
+                elif packet.functional_domain == FunctionalDomain.SCHEDULING:
+                    if packet.attribute == 4:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.SCHEDULING,
+                                4,
+                                sequence=self._get_sequence(),
+                                data={"hold": self.hold},
+                            )
                         )
-                    )
-
-                    self.sequence = (self.sequence + 1) % 128
-            elif functional_domain == FunctionalDomain.IDENTIFICATION:
-                if attribute == 4:
-                    self.queue.put_nowait(
-                        generate_command_bytes(
-                            self.sequence + 127,
-                            Action.READ_RESPONSE,
-                            FunctionalDomain.IDENTIFICATION,
-                            4,
-                            (
-                                pad_list([ord(c) for c in self.location], 8, 0)
-                                + pad_list([ord(c) for c in self.name], 16, 0)
-                            ),
+                elif packet.functional_domain == FunctionalDomain.IDENTIFICATION:
+                    if packet.attribute == 4:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.IDENTIFICATION,
+                                4,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "location": self.location,
+                                    "name": self.name,
+                                },
+                            )
                         )
-                    )
-
-                    self.sequence = (self.sequence + 1) % 128
-        elif action == Action.WRITE:
-            if functional_domain == FunctionalDomain.CONTROL:
-                if attribute == 1:
-                    decoded_packets = decode_packet(data)
-
-                    for decoded_packet in decoded_packets:
-                        if "mode" in decoded_packet:
-                            new_mode = decoded_packet["mode"]
+            elif packet.action == Action.WRITE:
+                if packet.functional_domain == FunctionalDomain.CONTROL:
+                    if packet.attribute == 1:
+                        if "mode" in packet.data:
+                            new_mode = packet.data["mode"]
 
                             if new_mode != 0:
                                 self.mode = new_mode
                                 self.hold = 0
 
-                        if "fan_mode" in decoded_packet:
-                            new_fan_mode = decoded_packet["fan_mode"]
+                        if "fan_mode" in packet.data:
+                            new_fan_mode = packet.data["fan_mode"]
 
                             if new_fan_mode != 0:
                                 self.fan_mode = new_fan_mode
 
-                        if "heat_setpoint" in decoded_packet:
-                            new_heat_setpoint = decoded_packet["heat_setpoint"]
+                        if "heat_setpoint" in packet.data:
+                            new_heat_setpoint = packet.data["heat_setpoint"]
 
                             if new_heat_setpoint != 0:
                                 self.heat_setpoint = new_heat_setpoint
                                 self.hold = 1
 
-                        if "cool_setpoint" in decoded_packet:
-                            new_cool_setpoint = decoded_packet["cool_setpoint"]
+                        if "cool_setpoint" in packet.data:
+                            new_cool_setpoint = packet.data["cool_setpoint"]
 
                             if new_cool_setpoint != 0:
                                 self.cool_setpoint = new_cool_setpoint
                                 self.hold = 1
 
-                        self.queue.put_nowait(
-                            generate_command_bytes(
-                                self.sequence + 127,
+                        self.packet_queue.put_nowait(
+                            Packet(
                                 Action.COS,
                                 FunctionalDomain.CONTROL,
                                 1,
-                                [
-                                    self.mode,
-                                    self.fan_mode,
-                                    encode_temperature(self.heat_setpoint),
-                                    encode_temperature(self.cool_setpoint),
-                                ],
+                                sequence=self._get_sequence(),
+                                data={
+                                    "mode": self.mode,
+                                    "fan_mode": self.fan_mode,
+                                    "heat_setpoint": self.heat_setpoint,
+                                    "cool_setpoint": self.cool_setpoint,
+                                },
                             )
                         )
 
-                        self.sequence = (self.sequence + 1) % 128
-
-                        self.queue.put_nowait(
-                            self._generate_thermostat_status_command_bytes()
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.STATUS,
+                                6,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "heating_equipment_status": {2: 2, 4: 7}.get(
+                                        self.mode, 0
+                                    ),
+                                    "cooling_equipment_status": {3: 2, 5: 2}.get(
+                                        self.mode, 0
+                                    ),
+                                    "progressive_recovery": 0,
+                                    "fan_status": 1
+                                    if self.fan_mode == 1 or self.fan_mode == 2
+                                    else 0,
+                                },
+                            )
                         )
 
-                        self.queue.put_nowait(
-                            generate_command_bytes(
-                                self.sequence + 127,
+                        self.packet_queue.put_nowait(
+                            Packet(
                                 Action.COS,
                                 FunctionalDomain.SCHEDULING,
                                 4,
-                                [self.hold] + list([0] * 9),
+                                sequence=self._get_sequence(),
+                                data={"hold": self.hold},
                             )
                         )
 
-                        self.sequence = (self.sequence + 1) % 128
-            elif functional_domain == FunctionalDomain.SCHEDULING:
-                if attribute == 4:
-                    decoded_packets = decode_packet(data)
+                elif packet.functional_domain == FunctionalDomain.SCHEDULING:
+                    if packet.attribute == 4:
+                        if "hold" in packet.data:
+                            self.hold = packet.data["hold"]
 
-                    for decoded_packet in decoded_packets:
-                        if "hold" in decoded_packet:
-                            self.hold = decoded_packet["hold"]
-
-                    self.queue.put_nowait(
-                        generate_command_bytes(
-                            self.sequence + 127,
-                            Action.COS,
-                            FunctionalDomain.SCHEDULING,
-                            4,
-                            [self.hold] + list([0] * 9),
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.SCHEDULING,
+                                4,
+                                sequence=self._get_sequence(),
+                                data={"hold": self.hold},
+                            )
                         )
-                    )
-
-                    self.sequence = (self.sequence + 1) % 128
-            elif functional_domain == FunctionalDomain.STATUS:
-                if attribute == 2:
-                    asyncio.ensure_future(self.send_status())
+                elif packet.functional_domain == FunctionalDomain.STATUS:
+                    if packet.attribute == 2:
+                        ensure_future(self._send_status())
 
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
@@ -356,12 +442,10 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    loop = new_event_loop()
+    set_event_loop(loop)
 
-    coro = loop.create_server(_AprilaireServerProtocol, args.host, args.port)
-
-    server = loop.run_until_complete(coro)
+    loop.create_task(loop.create_server(_AprilaireServerProtocol, args.host, args.port))
 
     _LOGGER.info("Server listening on %s port %d", args.host, args.port)
 
@@ -369,6 +453,3 @@ if __name__ == "__main__":
         loop.run_forever()
     except KeyboardInterrupt:
         pass
-    finally:
-        server.close()
-        loop.close()

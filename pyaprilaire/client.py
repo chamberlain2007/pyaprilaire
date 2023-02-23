@@ -2,19 +2,28 @@
 
 from __future__ import annotations
 
-import asyncio
+from asyncio import (
+    ensure_future,
+    get_event_loop,
+    sleep,
+    wait_for,
+    Future,
+    Queue,
+    Protocol,
+    Transport,
+)
+from asyncio.exceptions import InvalidStateError, TimeoutError
 
 from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
 from .const import Action, FunctionalDomain
-from .packet import decode_packet
+from .packet import Packet
 from .socket_client import SocketClient
-from .utils import encode_temperature, generate_command_bytes
 
 
-class _AprilaireClientProtocol(asyncio.Protocol):
+class _AprilaireClientProtocol(Protocol):
     """Protocol for interacting with the thermostat over socket connection"""
 
     def __init__(
@@ -28,37 +37,31 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         self.reconnect_action = reconnect_action
         self.logger = logger
 
-        self.transport: asyncio.Transport = None
+        self.transport: Transport = None
 
-        self.command_queue = asyncio.Queue()
+        self.command_queue = Queue()
 
-        self.sequence = 1
+        self.sequence = 0
 
-    async def _send_command(
-        self,
-        action: Action,
-        functional_domain: FunctionalDomain,
-        attribute: int,
-        extra_payload: list[int] = None,
-    ) -> None:
+    def _get_sequence(self):
+        self.sequence = (self.sequence + 1) % 128
+
+        return self.sequence
+
+    async def _send_packet(self, packet: Packet) -> None:
         """Send a command to the thermostat"""
-        command_bytes = generate_command_bytes(
-            self.sequence,
-            action,
-            functional_domain,
-            attribute,
-            extra_payload=extra_payload,
-        )
+
+        packet.sequence = self._get_sequence()
+
+        command_bytes = packet.serialize()
 
         self.logger.debug(
             "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
-            self.sequence,
-            str(action),
-            str(functional_domain),
-            attribute,
+            packet.sequence,
+            str(packet.action),
+            str(packet.functional_domain),
+            packet.attribute,
         )
-
-        self.sequence = (self.sequence + 1) % 128
 
         await self.command_queue.put(command_bytes)
 
@@ -84,17 +87,17 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
             self.transport.write(command_bytes)
 
-    def connection_made(self, transport: asyncio.Transport):
+    def connection_made(self, transport: Transport):
         """Called when a connection has been made to the socket"""
         self.logger.info("Aprilaire connection made")
 
         self.transport = transport
         self._empty_command_queue()
 
-        asyncio.ensure_future(self._process_command_queue())
+        ensure_future(self._process_command_queue())
 
         async def _update_status():
-            await asyncio.sleep(2)
+            await sleep(2)
 
             await self.read_mac_address()
             await self.read_thermostat_status()
@@ -102,38 +105,32 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             await self.configure_cos()
             await self.sync()
 
-        asyncio.ensure_future(_update_status())
+        ensure_future(_update_status())
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
         self.logger.info("Aprilaire data received")
 
-        decoded_packets = decode_packet(data)
+        parsed_packets = Packet.parse(data)
 
-        for decoded_packet in decoded_packets:
-            if "event" not in decoded_packet:
-                self.logger.warning("Event data missing")
-                return
-
-            (action, functional_domain, attribute) = decoded_packet["event"]
-
+        for packet in parsed_packets:
             self.logger.debug(
                 "Received data, action=%s, functional_domain=%s, attribute=%d",
-                action,
-                functional_domain,
-                attribute,
+                packet.action,
+                packet.functional_domain,
+                packet.attribute,
             )
 
-            if "error" in decoded_packet:
-                error = decoded_packet["error"]
+            if "error" in packet.data:
+                error = packet["error"]
 
                 if error != 0:
                     self.logger.error("Thermostat error: %d", error)
 
             if self.data_received_callback:
-                asyncio.ensure_future(
+                ensure_future(
                     self.data_received_callback(
-                        functional_domain, attribute, decoded_packet
+                        packet.functional_domain, packet.attribute, packet.data
                     )
                 )
 
@@ -142,72 +139,84 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         self.logger.info("Aprilaire connection lost")
 
         if self.data_received_callback:
-            asyncio.ensure_future(
+            ensure_future(
                 self.data_received_callback(
                     FunctionalDomain.NONE, 0, {"available": False}
                 )
             )
 
         if self.reconnect_action:
-            asyncio.ensure_future(self.reconnect_action())
+            ensure_future(self.reconnect_action())
 
     async def read_sensors(self):
         """Send a request for updated sensor data"""
-        await self._send_command(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+        )
 
     async def read_control(self):
         """Send a request for updated control data"""
-        await self._send_command(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+        )
 
     async def read_scheduling(self):
         """Send a request for updated scheduling data"""
-        await self._send_command(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 4)
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 4)
+        )
 
     async def update_mode(self, mode: int):
         """Send a request to update the mode"""
-        await self._send_command(
-            Action.WRITE,
-            FunctionalDomain.CONTROL,
-            1,
-            extra_payload=[
-                mode,  # Mode
-                0,  # Fan Mode (0 to not set)
-                0,  # Heat Setpoint (0 to not set)
-                0,  # Cool Setpoint (0 to not set)
-            ],
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                1,
+                data={
+                    "mode": mode,
+                    "fan_mode": 0,
+                    "heat_setpoint": 0,
+                    "cool_setpoint": 0,
+                },
+            )
         )
 
     async def update_fan_mode(self, fan_mode: int):
         """Send a request to update the fan mode"""
-        await self._send_command(
-            Action.WRITE,
-            FunctionalDomain.CONTROL,
-            1,
-            extra_payload=[
-                0,  # Mode (0 to not set)
-                fan_mode,  # Fan Mode
-                0,  # Heat Setpoint (0 to not set)
-                0,  # Cool Setpoint (0 to not set)
-            ],
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                1,
+                data={
+                    "mode": 0,
+                    "fan_mode": fan_mode,
+                    "heat_setpoint": 0,
+                    "cool_setpoint": 0,
+                },
+            )
         )
 
     async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
         """Send a request to update the setpoint"""
-        await self._send_command(
-            Action.WRITE,
-            FunctionalDomain.CONTROL,
-            1,
-            extra_payload=[
-                0,  # Mode
-                0,  # Fan
-                encode_temperature(heat_setpoint),  # Heat Setpoint
-                encode_temperature(cool_setpoint),  # Cool Setpoint
-            ],
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                1,
+                data={
+                    "mode": 0,
+                    "fan_mode": 0,
+                    "heat_setpoint": heat_setpoint,
+                    "cool_setpoint": cool_setpoint,
+                },
+            )
         )
 
     async def set_hold(self, hold: int):
         """Send a request to set the hold status"""
-        await self._send_command(
+        await self._send_packet(
             Action.WRITE,
             FunctionalDomain.SCHEDULING,
             4,
@@ -227,18 +236,18 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     async def sync(self):
         """Send a request to sync data"""
-        await self._send_command(
-            Action.WRITE,
-            FunctionalDomain.STATUS,
-            2,
-            extra_payload=[
-                1,  # Sync
-            ],
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.STATUS,
+                2,
+                data={"synced": 1},
+            )
         )
 
     async def configure_cos(self):
         """Send a request to configure the COS settings"""
-        await self._send_command(
+        await self._send_packet(
             Action.WRITE,
             FunctionalDomain.STATUS,
             1,
@@ -277,26 +286,20 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     async def read_mac_address(self):
         """Send a request to get identification data (including MAC address)"""
-        await self._send_command(
-            Action.READ_REQUEST,
-            FunctionalDomain.IDENTIFICATION,
-            2,
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 2)
         )
 
     async def read_thermostat_status(self):
         """Send a request for thermostat status"""
-        await self._send_command(
-            Action.READ_REQUEST,
-            FunctionalDomain.CONTROL,
-            7,
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 7)
         )
 
     async def read_thermostat_name(self):
         """Send a reques for the thermostat name"""
-        await self._send_command(
-            Action.READ_REQUEST,
-            FunctionalDomain.IDENTIFICATION,
-            5,
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5)
         )
 
 
@@ -312,6 +315,8 @@ class AprilaireClient(SocketClient):
         reconnect_interval: int = None,
         retry_connection_interval: int = None,
     ) -> None:
+        self.protocol: _AprilaireClientProtocol = None
+
         super().__init__(
             host,
             port,
@@ -321,7 +326,7 @@ class AprilaireClient(SocketClient):
             retry_connection_interval,
         )
 
-        self.futures: dict[tuple[FunctionalDomain, int], list[asyncio.Future]] = {}
+        self.futures: dict[tuple[FunctionalDomain, int], list[Future]] = {}
 
     def create_protocol(self):
         return _AprilaireClientProtocol(
@@ -344,7 +349,7 @@ class AprilaireClient(SocketClient):
         for future in futures_to_complete:
             try:
                 future.set_result(data)
-            except asyncio.exceptions.InvalidStateError:
+            except InvalidStateError:
                 pass
 
     def state_changed(self):
@@ -362,7 +367,7 @@ class AprilaireClient(SocketClient):
     ):
         """Wait for a response for a particular request"""
 
-        loop = asyncio.get_event_loop()
+        loop = get_event_loop()
         future = loop.create_future()
 
         future_key = (functional_domain, attribute)
@@ -373,8 +378,8 @@ class AprilaireClient(SocketClient):
         self.futures[future_key].append(future)
 
         try:
-            return await asyncio.wait_for(future, timeout)
-        except asyncio.exceptions.TimeoutError:
+            return await wait_for(future, timeout)
+        except TimeoutError:
             self.logger.error(
                 "Hit timeout of %d waiting for %s, %d",
                 timeout,
