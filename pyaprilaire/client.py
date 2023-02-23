@@ -9,6 +9,7 @@ from asyncio import (
     wait_for,
     Future,
     Queue,
+    QueueEmpty,
     Protocol,
     Transport,
 )
@@ -18,7 +19,7 @@ from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
-from .const import Action, FunctionalDomain
+from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
 from .packet import Packet
 from .socket_client import SocketClient
 
@@ -56,8 +57,6 @@ class _AprilaireClientProtocol(Protocol):
 
         packet.sequence = self._get_sequence()
 
-        command_bytes = packet.serialize()
-
         self.logger.debug(
             "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
             packet.sequence,
@@ -66,9 +65,9 @@ class _AprilaireClientProtocol(Protocol):
             packet.attribute,
         )
 
-        await self.packet_queue.put(command_bytes)
+        await self.packet_queue.put(packet)
 
-    def _empty_command_queue(self):
+    def _empty_packet_queue(self):
         try:
             for _ in range(self.packet_queue.qsize()):
                 self.packet_queue.get_nowait()
@@ -76,31 +75,32 @@ class _AprilaireClientProtocol(Protocol):
         except:  # pylint: disable=bare-except
             pass
 
-    async def _process_command_queue(self):
+    async def _queue_loop(self):
+        """Periodically send items from the queue"""
         while True:
-            command_bytes = await self.packet_queue.get()
-
-            if not command_bytes:
-                continue
-
-            if not self.transport:
-                break
-
-            self.logger.debug("Sending data %s", command_bytes.hex(" ", 1))
-
             try:
-                self.transport.write(command_bytes)
-            except Exception as exc:
-                self.logger.error("Failed to send data: %s", exc)
+                packet: Packet
+
+                while packet := self.packet_queue.get_nowait():
+                    if self.transport:
+                        serialized_packet = packet.serialize()
+
+                        self.logger.info("Sent data: %s", serialized_packet.hex(" "))
+
+                        self.transport.write(serialized_packet)
+            except QueueEmpty:
+                pass
+
+            await sleep(QUEUE_FREQUENCY)
 
     def connection_made(self, transport: Transport):
         """Called when a connection has been made to the socket"""
         self.logger.info("Aprilaire connection made")
 
         self.transport = transport
-        self._empty_command_queue()
+        self._empty_packet_queue()
 
-        ensure_future(self._process_command_queue())
+        ensure_future(self._queue_loop())
 
         async def _update_status():
             await sleep(2)
@@ -115,7 +115,7 @@ class _AprilaireClientProtocol(Protocol):
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
-        self.logger.info("Aprilaire data received")
+        self.logger.info("Aprilaire data received %s", data.hex(" "))
 
         parsed_packets = Packet.parse(data)
 

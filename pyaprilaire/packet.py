@@ -276,9 +276,17 @@ class Packet:
             revision = data[data_index]
             sequence = data[data_index + 1]
             count = data[data_index + 2] << 2 | data[data_index + 3]
-            action = Action(int(data[data_index + 4]))
-            functional_domain = FunctionalDomain(int(data[data_index + 5]))
+
+            action = int(data[data_index + 4])
+            functional_domain = int(data[data_index + 5])
             attribute = int(data[data_index + 6])
+
+            try:
+                action = Action(action)
+                functional_domain = FunctionalDomain(functional_domain)
+            except:
+                data_index += count + 5
+                continue
 
             if action == Action.NACK:
                 yield Packet(
@@ -329,20 +337,25 @@ class Packet:
 
                     if value_type == ValueType.INTEGER:
                         packet.data[attribute_name] = data_value
+                        data_index += 1
                     elif value_type == ValueType.INTEGER_REQUIRED:
                         if data_value is not None and data_value != 0:
                             packet.data[attribute_name] = data_value
+                        data_index += 1
                     elif value_type == ValueType.HUMIDITY:
                         packet.data[attribute_name] = self._decode_humidity(data_value)
+                        data_index += 1
                     elif value_type == ValueType.TEMPERATURE:
                         packet.data[attribute_name] = self._decode_temperature(
                             data_value
                         )
+                        data_index += 1
                     elif value_type == ValueType.TEMPERATURE_REQUIRED:
                         if data_value is not None and data_value != 0:
                             packet.data[attribute_name] = self._decode_temperature(
                                 data_value
                             )
+                        data_index += 1
                     elif value_type == ValueType.MAC_ADDRESS:
                         mac_address_components = []
 
@@ -363,13 +376,13 @@ class Packet:
                             text += current_value
                             data_index += 1
 
+                        data_index += 1
+
                         text = text.strip(" ")
 
                         packet.data[attribute_name] = text
 
                     attribute_index += 1
-
-                data_index += 1
 
             yield packet
 
@@ -458,7 +471,6 @@ class Packet:
                 ):
                     payload.append(self._encode_temperature(data_value))
                 elif value_type == ValueType.MAC_ADDRESS:
-                    print(data_value)
                     payload.extend(data_value)
                 elif value_type == ValueType.TEXT:
                     text_length = extra_attribute_info[0]

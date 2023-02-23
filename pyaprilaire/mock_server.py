@@ -9,16 +9,16 @@ from asyncio import (
     set_event_loop,
     sleep,
     Queue,
+    QueueEmpty,
     Protocol,
     Transport,
 )
 import logging
 
-from .const import Action, FunctionalDomain
+from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
 from .packet import Packet
 
 COS_FREQUENCY = 30
-QUEUE_FREQUENCY = 0.5
 
 
 class CustomFormatter(logging.Formatter):
@@ -253,26 +253,25 @@ class _AprilaireServerProtocol(Protocol):
 
     async def _cos_loop(self):
         """Send the current status (COS) periodically"""
-        await sleep(2)
-
         while self.transport:
-            await self._send_status()
             await sleep(COS_FREQUENCY)
+            await self._send_status()
 
     async def _queue_loop(self):
         """Periodically send items from the queue"""
         while self.transport:
             try:
-                packet: Packet = await self.packet_queue.get()
-            except:
-                continue
+                packet: Packet
 
-            if self.transport:
-                serialized_packet = packet.serialize()
+                while packet := self.packet_queue.get_nowait():
+                    if self.transport:
+                        serialized_packet = packet.serialize()
 
-                _LOGGER.info("Sent data: %s", serialized_packet.hex(" "))
+                        _LOGGER.info("Sent data: %s", serialized_packet.hex(" "))
 
-                self.transport.write(serialized_packet)
+                        self.transport.write(serialized_packet)
+            except QueueEmpty:
+                pass
 
             await sleep(QUEUE_FREQUENCY)
 

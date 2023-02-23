@@ -48,3 +48,5 @@ MODELS = {
     7: "8840",
     28: "6045M",
 }
+
+QUEUE_FREQUENCY = 0.5

@@ -88,8 +88,6 @@ class SocketClient:
     async def _reconnect(self, connect_wait_period: int = 0):
         """Reconnect to the socket"""
 
-        self.logger.error("Reconnecting with wait period %d", connect_wait_period)
-
         if self.reconnecting:
             return
 
