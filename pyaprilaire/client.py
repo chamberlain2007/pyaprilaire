@@ -39,7 +39,7 @@ class _AprilaireClientProtocol(Protocol):
 
         self.transport: Transport = None
 
-        self.command_queue = Queue()
+        self.packet_queue = Queue()
 
         self.sequence = 0
 
@@ -66,19 +66,19 @@ class _AprilaireClientProtocol(Protocol):
             packet.attribute,
         )
 
-        await self.command_queue.put(command_bytes)
+        await self.packet_queue.put(command_bytes)
 
     def _empty_command_queue(self):
         try:
-            for _ in range(self.command_queue.qsize()):
-                self.command_queue.get_nowait()
-                self.command_queue.task_done()
+            for _ in range(self.packet_queue.qsize()):
+                self.packet_queue.get_nowait()
+                self.packet_queue.task_done()
         except:  # pylint: disable=bare-except
             pass
 
     async def _process_command_queue(self):
         while True:
-            command_bytes = await self.command_queue.get()
+            command_bytes = await self.packet_queue.get()
 
             if not command_bytes:
                 continue
