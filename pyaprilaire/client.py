@@ -51,6 +51,9 @@ class _AprilaireClientProtocol(Protocol):
     async def _send_packet(self, packet: Packet) -> None:
         """Send a command to the thermostat"""
 
+        if self.transport is None:
+            return
+
         packet.sequence = self._get_sequence()
 
         command_bytes = packet.serialize()
@@ -85,7 +88,10 @@ class _AprilaireClientProtocol(Protocol):
 
             self.logger.debug("Sending data %s", command_bytes.hex(" ", 1))
 
-            self.transport.write(command_bytes)
+            try:
+                self.transport.write(command_bytes)
+            except Exception as exc:
+                self.logger.error("Failed to send data: %s", exc)
 
     def connection_made(self, transport: Transport):
         """Called when a connection has been made to the socket"""
@@ -144,6 +150,8 @@ class _AprilaireClientProtocol(Protocol):
                     FunctionalDomain.NONE, 0, {"available": False}
                 )
             )
+
+        self.transport = None
 
         if self.reconnect_action:
             ensure_future(self.reconnect_action())
@@ -216,22 +224,14 @@ class _AprilaireClientProtocol(Protocol):
 
     async def set_hold(self, hold: int):
         """Send a request to set the hold status"""
+
         await self._send_packet(
-            Action.WRITE,
-            FunctionalDomain.SCHEDULING,
-            4,
-            extra_payload=[
-                hold,  # Hold
-                0,  # Fan
-                0,  # Heat Setpoint
-                0,  # Cool Setpoint
-                0,  # DEH Vacation
-                0,  # End Minute
-                0,  # End Hour
-                0,  # End Date
-                0,  # End Month
-                0,  # End Year
-            ],
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.SCHEDULING,
+                4,
+                data={"hold": hold},
+            )
         )
 
     async def sync(self):
@@ -248,40 +248,42 @@ class _AprilaireClientProtocol(Protocol):
     async def configure_cos(self):
         """Send a request to configure the COS settings"""
         await self._send_packet(
-            Action.WRITE,
-            FunctionalDomain.STATUS,
-            1,
-            extra_payload=[
-                1,  # Installer Thermostat Settings
-                0,  # Contractor Information
-                0,  # Air Cleaning Installer Variable
-                0,  # Humidity Control Installer Settings
-                0,  # Fresh Air Installer Settings
-                1,  # Thermostat Setpoint & Mode Settings
-                0,  # Dehumidification Setpoint
-                0,  # Humidification Setpoint
-                0,  # Fresh Air Setting
-                0,  # Air Cleaning Settings
-                1,  # Thermostat IAQ Available
-                0,  # Schedule Settings
-                0,  # Away Settings
-                0,  # Schedule Day
-                1,  # Schedule Hold
-                0,  # Heat Blast
-                0,  # Service Reminders Status
-                0,  # Alerts Status
-                0,  # Alerts Settings
-                0,  # Backlight Settings
-                1,  # Thermostat Location & Name
-                0,  # Reserved
-                1,  # Controlling Sensor Values
-                0,  # Over the air ODT update timeout
-                1,  # Thermostat Status
-                1,  # IAQ Status
-                1,  # Model & Revision
-                0,  # Support Module
-                0,  # Lockouts
-            ],
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.STATUS,
+                1,
+                raw_data=[
+                    1,  # Installer Thermostat Settings
+                    0,  # Contractor Information
+                    0,  # Air Cleaning Installer Variable
+                    0,  # Humidity Control Installer Settings
+                    0,  # Fresh Air Installer Settings
+                    1,  # Thermostat Setpoint & Mode Settings
+                    0,  # Dehumidification Setpoint
+                    0,  # Humidification Setpoint
+                    0,  # Fresh Air Setting
+                    0,  # Air Cleaning Settings
+                    1,  # Thermostat IAQ Available
+                    0,  # Schedule Settings
+                    0,  # Away Settings
+                    0,  # Schedule Day
+                    1,  # Schedule Hold
+                    0,  # Heat Blast
+                    0,  # Service Reminders Status
+                    0,  # Alerts Status
+                    0,  # Alerts Settings
+                    0,  # Backlight Settings
+                    1,  # Thermostat Location & Name
+                    0,  # Reserved
+                    1,  # Controlling Sensor Values
+                    0,  # Over the air ODT update timeout
+                    1,  # Thermostat Status
+                    1,  # IAQ Status
+                    1,  # Model & Revision
+                    0,  # Support Module
+                    0,  # Lockouts
+                ],
+            )
         )
 
     async def read_mac_address(self):
@@ -328,9 +330,12 @@ class AprilaireClient(SocketClient):
 
         self.futures: dict[tuple[FunctionalDomain, int], list[Future]] = {}
 
+    async def _reconnect_with_delay(self):
+        await super()._reconnect(self.retry_connection_interval)
+
     def create_protocol(self):
         return _AprilaireClientProtocol(
-            self.data_received, self._reconnect, self.logger
+            self.data_received, self._reconnect_with_delay, self.logger
         )
 
     async def data_received(

@@ -246,6 +246,7 @@ class Packet:
         sequence: int = 0,
         count: int = 0,
         data: dict[str, Any] = {},
+        raw_data: list[int] = None,
     ):
         self.action = action
         self.functional_domain = functional_domain
@@ -254,6 +255,7 @@ class Packet:
         self.sequence = sequence
         self.count = count
         self.data = data
+        self.raw_data = raw_data
 
     @classmethod
     def decode_packet_header(self, data: bytes, data_index: int = 0):
@@ -275,13 +277,14 @@ class Packet:
             revision = data[data_index]
             sequence = data[data_index + 1]
             count = data[data_index + 2] << 2 | data[data_index + 3]
-
-            (action, functional_domain, attribute) = self.decode_packet_header(
-                data, data_index
-            )
+            action = Action(int(data[data_index + 4]))
+            functional_domain = FunctionalDomain(int(data[data_index + 5]))
+            attribute = int(data[data_index + 6])
 
             if action == Action.NACK:
-                yield Packet(action, functional_domain, attribute)
+                yield Packet(
+                    action, functional_domain, attribute, revision, sequence, count
+                )
                 data_index += count + 5
                 continue
 
@@ -294,7 +297,7 @@ class Packet:
                 continue
 
             packet = Packet(
-                revision, sequence, count, action, functional_domain, attribute
+                action, functional_domain, attribute, revision, sequence, count
             )
 
             # Skip header
@@ -426,40 +429,48 @@ class Packet:
     def serialize(self) -> bytes:
         payload = [int(self.action), int(self.functional_domain), self.attribute]
 
-        for attribute_info in MAPPING[self.action][self.functional_domain][
-            self.attribute
-        ]:
-            (attribute_name, value_type, extra_attribute_info) = (
-                attribute_info[0],
-                attribute_info[1],
-                attribute_info[2:],
-            )
+        if self.raw_data is not None:
+            payload.extend(self.raw_data)
+        elif (
+            self.action == Action.WRITE
+            or self.action == Action.READ_RESPONSE
+            or self.action == Action.COS
+        ):
+            for attribute_info in MAPPING[self.action][self.functional_domain][
+                self.attribute
+            ]:
+                (attribute_name, value_type, extra_attribute_info) = (
+                    attribute_info[0],
+                    attribute_info[1],
+                    attribute_info[2:],
+                )
 
-            data_value = self.data.get(attribute_name)
+                data_value = self.data.get(attribute_name)
 
-            if (
-                value_type == ValueType.INTEGER
-                or value_type == ValueType.INTEGER_REQUIRED
-                or value_type == ValueType.HUMIDITY
-            ):
-                payload.append(data_value)
-            elif (
-                value_type == ValueType.TEMPERATURE
-                or value_type == ValueType.TEMPERATURE_REQUIRED
-            ):
-                payload.append(self._encode_temperature(data_value))
-            elif value_type == ValueType.MAC_ADDRESS:
-                payload.extend(data_value)
-            elif value_type == ValueType.TEXT:
-                text_length = extra_attribute_info[0]
+                if (
+                    value_type == ValueType.INTEGER
+                    or value_type == ValueType.INTEGER_REQUIRED
+                    or value_type == ValueType.HUMIDITY
+                ):
+                    payload.append(data_value)
+                elif (
+                    value_type == ValueType.TEMPERATURE
+                    or value_type == ValueType.TEMPERATURE_REQUIRED
+                ):
+                    payload.append(self._encode_temperature(data_value))
+                elif value_type == ValueType.MAC_ADDRESS:
+                    print(data_value)
+                    payload.extend(data_value)
+                elif value_type == ValueType.TEXT:
+                    text_length = extra_attribute_info[0]
 
-                for i in range(0, text_length + 1):
-                    if i >= len(data_value):
-                        payload.append(0)
-                    else:
-                        payload.append(ord(data_value[i]))
-            else:
-                pass
+                    for i in range(0, text_length + 1):
+                        if i >= len(data_value):
+                            payload.append(0)
+                        else:
+                            payload.append(ord(data_value[i]))
+                else:
+                    pass
 
         (payload_length_high, payload_length_low) = self._encode_int_value(len(payload))
         result = [1, self.sequence, payload_length_high, payload_length_low]
