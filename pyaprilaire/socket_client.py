@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-import asyncio
-
-from logging import Logger
-
+from asyncio import (
+    ensure_future,
+    get_event_loop,
+    sleep,
+    wait_for,
+    Future,
+    Protocol,
+)
+from asyncio.exceptions import CancelledError, InvalidStateError, TimeoutError
 from collections.abc import Callable
 from typing import Any
+from logging import Logger
 
 
 class SocketClient:
@@ -34,11 +40,12 @@ class SocketClient:
         self.connected = False
         self.stopped = True
         self.reconnecting = False
-        self.reconnect_break_future: asyncio.Future = None
+        self.reconnect_break_future: Future = None
 
-        self.protocol: asyncio.Protocol = None
+        self.protocol: Protocol = None
 
     async def _reconnect_loop(self):
+        """Wait for cancellable reconnect interval to pass, and perform reconnect"""
         if not self.reconnect_interval:
             return
 
@@ -47,28 +54,28 @@ class SocketClient:
                 break
 
             if not self.reconnect_break_future:
-                loop = asyncio.get_event_loop()
+                loop = get_event_loop()
                 self.reconnect_break_future = loop.create_future()
 
             try:
-                await asyncio.wait_for(
-                    self.reconnect_break_future, self.reconnect_interval
-                )
+                await wait_for(self.reconnect_break_future, self.reconnect_interval)
                 break
-            except asyncio.exceptions.CancelledError:
+            except CancelledError:
                 break
-            except asyncio.exceptions.TimeoutError:
+            except TimeoutError:
                 await self._reconnect(10)
 
     def _cancel_reconnect_loop(self):
+        """Cancel the loop which does periodic reconnection"""
         if self.reconnect_break_future:
             try:
                 self.reconnect_break_future.set_result(True)
-            except asyncio.exceptions.InvalidStateError:
+            except InvalidStateError:
                 pass
             self.reconnect_break_future = None
 
     def _disconnect(self):
+        """Disconnect from the socket"""
         self._cancel_reconnect_loop()
 
         self.connected = False
@@ -78,7 +85,9 @@ class SocketClient:
         if self.protocol and self.protocol.transport:
             self.protocol.transport.close()
 
-    async def _reconnect(self, connect_wait_period: int = None):
+    async def _reconnect(self, connect_wait_period: int = 0):
+        """Reconnect to the socket"""
+
         if self.reconnecting:
             return
 
@@ -86,10 +95,11 @@ class SocketClient:
 
         self.state_changed()
 
+        # Ensure already disconnected
         self._disconnect()
 
-        if connect_wait_period:
-            await asyncio.sleep(connect_wait_period)
+        if connect_wait_period > 0:
+            await sleep(connect_wait_period)
 
         self.protocol = self.create_protocol()
 
@@ -98,7 +108,7 @@ class SocketClient:
                 break
 
             try:
-                await asyncio.get_event_loop().create_connection(
+                await get_event_loop().create_connection(
                     lambda: self.protocol,
                     self.host,
                     self.port,
@@ -109,7 +119,7 @@ class SocketClient:
 
                 self.state_changed()
 
-                asyncio.ensure_future(self._reconnect_loop())
+                ensure_future(self._reconnect_loop())
 
                 break
 
@@ -117,7 +127,7 @@ class SocketClient:
                 self.logger.error("Failed to connect to thermostat: %s", str(exc))
 
                 if not self.stopped:
-                    await asyncio.sleep(self.retry_connection_interval)
+                    await sleep(self.retry_connection_interval)
 
     def start_listen(self):
         """Start listening to the socket"""
@@ -126,7 +136,7 @@ class SocketClient:
 
         self.state_changed()
 
-        asyncio.ensure_future(self._reconnect())
+        ensure_future(self._reconnect())
 
     def stop_listen(self):
         """Stop listening to the socket"""
@@ -137,7 +147,7 @@ class SocketClient:
 
         self._disconnect()
 
-    def create_protocol(self):
+    def create_protocol(self) -> Protocol:
         """Create the socket protocol (implemented in derived class)"""
         raise NotImplementedError()
 
