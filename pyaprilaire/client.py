@@ -52,9 +52,6 @@ class _AprilaireClientProtocol(Protocol):
     async def _send_packet(self, packet: Packet) -> None:
         """Send a command to the thermostat"""
 
-        if self.transport is None:
-            return
-
         packet.sequence = self._get_sequence()
 
         self.logger.debug(
