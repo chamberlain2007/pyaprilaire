@@ -98,7 +98,7 @@ class SocketClient:
         # Ensure already disconnected
         self._disconnect()
 
-        if connect_wait_period > 0:
+        if connect_wait_period is not None and connect_wait_period > 0:
             await sleep(connect_wait_period)
 
         self.protocol = self.create_protocol()
