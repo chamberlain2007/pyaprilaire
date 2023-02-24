@@ -304,6 +304,7 @@ class Packet:
                 if attribute_index >= len(
                     MAPPING[action][functional_domain][attribute]
                 ):
+                    data_index += 1
                     pass
                 else:
                     attribute_info = MAPPING[action][functional_domain][attribute][
