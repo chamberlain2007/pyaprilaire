@@ -125,7 +125,7 @@ class _AprilaireClientProtocol(Protocol):
             )
 
             if "error" in packet.data:
-                error = packet["error"]
+                error = packet.data["error"]
 
                 if error != 0:
                     self.logger.error("Thermostat error: %d", error)
