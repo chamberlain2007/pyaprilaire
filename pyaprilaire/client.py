@@ -20,7 +20,7 @@ from logging import Logger
 from typing import Any
 
 from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
-from .packet import Packet
+from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 
 
@@ -119,16 +119,21 @@ class _AprilaireClientProtocol(Protocol):
         for packet in parsed_packets:
             self.logger.debug(
                 "Received data, action=%s, functional_domain=%s, attribute=%d",
-                packet.action,
-                packet.functional_domain,
+                str(packet.action),
+                str(packet.functional_domain),
                 packet.attribute,
             )
+
+            if isinstance(packet, NackPacket):
+                self.logger.error("Received NACK for attribute %d", packet.nack_attribute)
+                return
 
             if "error" in packet.data:
                 error = packet.data["error"]
 
                 if error != 0:
                     self.logger.error("Thermostat error: %d", error)
+
 
             if self.data_received_callback:
                 ensure_future(

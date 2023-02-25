@@ -16,7 +16,7 @@ from asyncio import (
 import logging
 
 from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
-from .packet import Packet
+from .packet import NackPacket, Packet
 
 COS_FREQUENCY = 30
 

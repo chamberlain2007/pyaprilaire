@@ -277,9 +277,10 @@ class Packet:
                 continue
 
             if action == Action.NACK:
-                yield Packet(
-                    action, functional_domain, attribute, revision, sequence, count
-                )
+                nack_attribute = int(data[data_index + 5])
+
+                yield NackPacket(nack_attribute)
+
                 data_index += count + 5
                 continue
 
@@ -428,52 +429,70 @@ class Packet:
         return ((value >> 8) & 0xFF, value & 0xFF)
 
     def serialize(self) -> bytes:
-        payload = [int(self.action), int(self.functional_domain), self.attribute]
+        if isinstance(self, NackPacket):
+            payload = [int(Action.NACK), self.nack_attribute]
+        else:
+            payload = [int(self.action), int(self.functional_domain), self.attribute]
 
-        if self.raw_data is not None:
-            payload.extend(self.raw_data)
-        elif (
-            self.action == Action.WRITE
-            or self.action == Action.READ_RESPONSE
-            or self.action == Action.COS
-        ):
-            for attribute_info in MAPPING[self.action][self.functional_domain][
-                self.attribute
-            ]:
-                (attribute_name, value_type, extra_attribute_info) = (
-                    attribute_info[0],
-                    attribute_info[1],
-                    attribute_info[2:],
-                )
+            if self.raw_data is not None:
+                payload.extend(self.raw_data)
+            elif (
+                self.action == Action.WRITE
+                or self.action == Action.READ_RESPONSE
+                or self.action == Action.COS
+            ):
+                for attribute_info in MAPPING[self.action][self.functional_domain][
+                    self.attribute
+                ]:
+                    (attribute_name, value_type, extra_attribute_info) = (
+                        attribute_info[0],
+                        attribute_info[1],
+                        attribute_info[2:],
+                    )
 
-                data_value = self.data.get(attribute_name)
+                    data_value = self.data.get(attribute_name)
 
-                if (
-                    value_type == ValueType.INTEGER
-                    or value_type == ValueType.INTEGER_REQUIRED
-                    or value_type == ValueType.HUMIDITY
-                ):
-                    payload.append(data_value)
-                elif (
-                    value_type == ValueType.TEMPERATURE
-                    or value_type == ValueType.TEMPERATURE_REQUIRED
-                ):
-                    payload.append(self._encode_temperature(data_value))
-                elif value_type == ValueType.MAC_ADDRESS:
-                    payload.extend(data_value)
-                elif value_type == ValueType.TEXT:
-                    text_length = extra_attribute_info[0]
+                    if (
+                        value_type == ValueType.INTEGER
+                        or value_type == ValueType.INTEGER_REQUIRED
+                        or value_type == ValueType.HUMIDITY
+                    ):
+                        payload.append(data_value)
+                    elif (
+                        value_type == ValueType.TEMPERATURE
+                        or value_type == ValueType.TEMPERATURE_REQUIRED
+                    ):
+                        payload.append(self._encode_temperature(data_value))
+                    elif value_type == ValueType.MAC_ADDRESS:
+                        payload.extend(data_value)
+                    elif value_type == ValueType.TEXT:
+                        text_length = extra_attribute_info[0]
 
-                    for i in range(0, text_length + 1):
-                        if i >= len(data_value):
-                            payload.append(0)
-                        else:
-                            payload.append(ord(data_value[i]))
-                else:
-                    pass
+                        for i in range(0, text_length + 1):
+                            if i >= len(data_value):
+                                payload.append(0)
+                            else:
+                                payload.append(ord(data_value[i]))
+                    else:
+                        payload.append(0)
 
         (payload_length_high, payload_length_low) = self._encode_int_value(len(payload))
         result = [1, self.sequence, payload_length_high, payload_length_low]
         result.extend(payload)
         result.append(self._generate_crc(result))
         return bytes(result)
+
+
+class NackPacket(Packet):
+    def __init__(
+        self,
+        nack_attribute: int,
+        revision: int = 1,
+        sequence: int = 0,
+        count: int = 0,
+    ):
+        super().__init__(
+            Action.NACK, FunctionalDomain.NACK, 0, revision, sequence, count
+        )
+
+        self.nack_attribute = nack_attribute
