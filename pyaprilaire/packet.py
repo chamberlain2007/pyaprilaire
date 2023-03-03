@@ -227,12 +227,17 @@ MAPPING = {
                 ("location", ValueType.TEXT, 7),
                 ("name", ValueType.TEXT, 15),
             ],
+            5: [
+                ("location", ValueType.TEXT, 7),
+                ("name", ValueType.TEXT, 15),
+            ],
         },
     }
 }
 
 MAPPING[Action.COS] = MAPPING[Action.READ_RESPONSE]
 MAPPING[Action.WRITE] = MAPPING[Action.READ_RESPONSE]
+MAPPING[Action.READ_REQUEST] = MAPPING[Action.READ_RESPONSE]
 
 
 class Packet:
@@ -244,7 +249,7 @@ class Packet:
         revision: int = 1,
         sequence: int = 0,
         count: int = 0,
-        data: dict[str, Any] = {},
+        data: dict[str, Any] = None,
         raw_data: list[int] = None,
     ):
         self.action = action
@@ -253,7 +258,7 @@ class Packet:
         self.revision = revision
         self.sequence = sequence
         self.count = count
-        self.data = data
+        self.data = data or {}
         self.raw_data = raw_data
 
     @classmethod
