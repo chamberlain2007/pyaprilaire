@@ -69,6 +69,7 @@ class _AprilaireServerProtocol(Protocol):
 
         self.name = "Mock"
         self.location = "02134"
+        self.mac_address = [1, 2, 3, 4, 5, 6]
 
         self.packet_queue = Queue()
 
@@ -100,22 +101,7 @@ class _AprilaireServerProtocol(Protocol):
                 1,
                 sequence=self._get_sequence(),
                 data={
-                    "mode": self.mode,
-                    "fan_mode": self.fan_mode,
-                    "heat_setpoint": self.heat_setpoint,
-                    "cool_setpoint": self.cool_setpoint,
-                },
-            )
-        )
-
-        await self.packet_queue.put(
-            Packet(
-                Action.COS,
-                FunctionalDomain.CONTROL,
-                1,
-                sequence=self._get_sequence(),
-                data={
-                    "mode": self.mode,
+                    "mode": 1,
                     "fan_mode": self.fan_mode,
                     "heat_setpoint": self.heat_setpoint,
                     "cool_setpoint": self.cool_setpoint,
@@ -290,7 +276,39 @@ class _AprilaireServerProtocol(Protocol):
 
         for packet in parsed_packets:
             if packet.action == Action.READ_REQUEST:
-                if packet.functional_domain == FunctionalDomain.SENSORS:
+                if packet.functional_domain == FunctionalDomain.CONTROL:
+                    if packet.attribute == 1:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.CONTROL,
+                                1,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "mode": self.mode,
+                                    "fan_mode": self.fan_mode,
+                                    "heat_setpoint": self.heat_setpoint,
+                                    "cool_setpoint": self.cool_setpoint,
+                                },
+                            )
+                        )
+                    elif packet.attribute == 7:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.CONTROL,
+                                7,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "thermostat_modes": 6,
+                                    "air_cleaning_available": 1,
+                                    "ventilation_available": 1,
+                                    "dehumidification_available": 1,
+                                    "humidification_available": 1,
+                                },
+                            )
+                        )
+                elif packet.functional_domain == FunctionalDomain.SENSORS:
                     if packet.attribute == 2:
                         self.packet_queue.put_nowait(
                             Packet(
@@ -322,7 +340,17 @@ class _AprilaireServerProtocol(Protocol):
                             )
                         )
                 elif packet.functional_domain == FunctionalDomain.IDENTIFICATION:
-                    if packet.attribute == 4:
+                    if packet.attribute == 2:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.IDENTIFICATION,
+                                2,
+                                sequence=self._get_sequence(),
+                                data={"mac_address": self.mac_address},
+                            )
+                        )
+                    elif packet.attribute == 4 or packet.attribute == 5:
                         self.packet_queue.put_nowait(
                             Packet(
                                 Action.READ_RESPONSE,

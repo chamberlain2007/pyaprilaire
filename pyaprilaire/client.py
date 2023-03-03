@@ -104,7 +104,9 @@ class _AprilaireClientProtocol(Protocol):
 
             await self.read_mac_address()
             await self.read_thermostat_status()
+            await self.read_control()
             await self.read_sensors()
+            await self.read_thermostat_name()
             await self.configure_cos()
             await self.sync()
 
@@ -125,7 +127,9 @@ class _AprilaireClientProtocol(Protocol):
             )
 
             if isinstance(packet, NackPacket):
-                self.logger.error("Received NACK for attribute %d", packet.nack_attribute)
+                self.logger.error(
+                    "Received NACK for attribute %d", packet.nack_attribute
+                )
                 return
 
             if "error" in packet.data:
@@ -134,6 +138,17 @@ class _AprilaireClientProtocol(Protocol):
                 if error != 0:
                     self.logger.error("Thermostat error: %d", error)
 
+            if (
+                packet.action == Action.COS
+                and packet.functional_domain == FunctionalDomain.CONTROL
+                and packet.attribute == 1
+                and packet.data.get("mode") == 1
+            ):
+                self.logger.info("Re-reading control because of COS with mode==1")
+
+                ensure_future(self.read_control())
+
+                continue
 
             if self.data_received_callback:
                 ensure_future(
