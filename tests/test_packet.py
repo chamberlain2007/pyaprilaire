@@ -206,7 +206,60 @@ class Test_Packet(unittest.TestCase):
             {"location": "12345", "name": "Test Name"},
         )
 
+    def test_decode_temperature(self):
+        temperature = Packet._decode_temperature(0x15)
+
+        self.assertEqual(temperature, 21)
+
+    def test_decode_temperature_negative(self):
+        temperature = Packet._decode_temperature(0x95)
+
+        self.assertEqual(temperature, -21)
+
+    def test_decode_temperature_decimal(self):
+        temperature = Packet._decode_temperature(0x5A)
+
+        self.assertEqual(temperature, 26.5)
+
+    def test_decode_temperature_negative_decimal(self):
+        temperature = Packet._decode_temperature(0xDA)
+
+        self.assertEqual(temperature, -26.5)
+
+    def test_decode_humidity_zero(self):
+        humidity = Packet._decode_humidity(0)
+
+        self.assertEqual(humidity, None)
+
+    def test_decode_humidity_1(self):
+        humidity = Packet._decode_humidity(1)
+
+        self.assertEqual(humidity, 1)
+
+    def test_decode_humidity_99(self):
+        humidity = Packet._decode_humidity(99)
+
+        self.assertEqual(humidity, 99)
+
+    def test_decode_humidity_100(self):
+        humidity = Packet._decode_humidity(100)
+
+        self.assertEqual(humidity, None)
+
+    def test_decode_humidity_nonzero(self):
+        humidity = Packet._decode_humidity(50)
+
+        self.assertEqual(humidity, 50)
+
+    def test_decode_humidity_negative(self):
+        humidity = Packet._decode_humidity(-50)
+
+        self.assertEqual(humidity, None)
+
     def test_serialize_nack(self):
         serialized = NackPacket(2).serialize()
 
-        self.assertSequenceEqual(serialized, [1, 0, 0, 2, 6, 2, 227])
+        self.assertSequenceEqual(
+            serialized,
+            [1, 0, 0, 2, 6, 2, 227],
+        )
