@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from crc import Calculator, Configuration
 from enum import Enum
 import math
@@ -262,7 +263,7 @@ class Packet:
         self.raw_data = raw_data
 
     @classmethod
-    def parse(self, data: bytes) -> list[Packet]:
+    def parse(self, data: bytes) -> Iterator[Packet]:
         data_index = 0
 
         while data_index < len(data):
