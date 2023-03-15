@@ -304,6 +304,7 @@ class Packet:
 
             # Skip header
             final_index = data_index + count + 3
+            payload_start_index = data_index
             data_index += 7
             attribute_index = 0
 
@@ -380,7 +381,10 @@ class Packet:
 
                     attribute_index += 1
 
-            yield packet
+            crc = data[data_index]
+
+            if Packet._verify_crc(data[payload_start_index:data_index], crc):
+                yield packet
 
             data_index += 1
 
@@ -401,7 +405,7 @@ class Packet:
         is_fraction = temperature % 1 >= 0.5
 
         return (
-            math.floor(temperature)
+            math.floor(abs(temperature))
             + (64 if is_fraction else 0)
             + (128 if is_negative else 0)
         )
