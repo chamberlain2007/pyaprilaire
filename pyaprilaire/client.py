@@ -130,7 +130,7 @@ class _AprilaireClientProtocol(Protocol):
                 self.logger.error(
                     "Received NACK for attribute %d", packet.nack_attribute
                 )
-                return
+                continue
 
             if "error" in packet.data:
                 error = packet.data["error"]
