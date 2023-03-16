@@ -93,9 +93,48 @@ class Test_Packet(unittest.TestCase):
         self.assertEqual(packet.attribute, 4)
 
     def test_nack_parse(self):
-        packets: list[Packet] = list(Packet.parse([1, 1, 0, 3, 6, 1, 0]))
+        packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0]))
 
         self.assertEqual(len(packets), 1)
+
+    def test_nack_and_packet_parse(self):
+        packets: list[Packet] = list(
+            Packet.parse(
+                [
+                    0x01,
+                    0x04,
+                    0x00,
+                    0x02,
+                    0x06,
+                    0x03,
+                    0xCD,
+                    0x01,
+                    0x01,
+                    0x00,
+                    0x11,
+                    0x03,
+                    0x08,
+                    0x02,
+                    0xB4,
+                    0x82,
+                    0x55,
+                    0x50,
+                    0x93,
+                    0x6D,
+                    0x01,
+                    0x49,
+                    0x02,
+                    0x01,
+                    0x02,
+                    0x0D,
+                    0x04,
+                    0x0E,
+                    0x51,
+                ]
+            )
+        )
+
+        self.assertEqual(len(packets), 2)
 
     def test_nack_packet_parse(self):
         packets: list[Packet] = list(Packet.parse([1, 1, 0, 3, 6, 1, 0]))
