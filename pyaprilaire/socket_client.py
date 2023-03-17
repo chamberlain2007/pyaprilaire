@@ -10,6 +10,7 @@ from asyncio import (
     Future,
     Protocol,
 )
+import asyncio
 from asyncio.exceptions import CancelledError, InvalidStateError, TimeoutError
 from collections.abc import Callable
 from typing import Any
@@ -99,7 +100,7 @@ class SocketClient:
         self._disconnect()
 
         if connect_wait_period is not None and connect_wait_period > 0:
-            await sleep(connect_wait_period)
+            await asyncio.sleep(connect_wait_period)
 
         self.protocol = self.create_protocol()
 
@@ -127,16 +128,16 @@ class SocketClient:
                 self.logger.error("Failed to connect to thermostat: %s", str(exc))
 
                 if not self.stopped:
-                    await sleep(self.retry_connection_interval)
+                    await asyncio.sleep(self.retry_connection_interval)
 
-    def start_listen(self):
+    async def start_listen(self):
         """Start listening to the socket"""
 
         self.stopped = False
 
         self.state_changed()
 
-        ensure_future(self._reconnect())
+        await self._reconnect()
 
     def stop_listen(self):
         """Stop listening to the socket"""
@@ -149,8 +150,8 @@ class SocketClient:
 
     def create_protocol(self) -> Protocol:
         """Create the socket protocol (implemented in derived class)"""
-        raise NotImplementedError()
+        return None
 
     def state_changed(self):
         """Handle a state change (implemented in derived class)"""
-        raise NotImplementedError()
+        pass
