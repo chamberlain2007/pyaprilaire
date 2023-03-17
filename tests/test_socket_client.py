@@ -1,67 +1,33 @@
-from pyaprilaire.const import Action, FunctionalDomain
 from pyaprilaire.client import SocketClient
 
 import asyncio
-from asyncio import Protocol, Transport
+from asyncio import Protocol
+
+import logging
 
 import unittest
-from unittest.mock import patch, AsyncMock
-import logging
-import sys
-
-
-class MockTransport(Transport):
-    def __init__(self):
-        super().__init__()
-
-    def close(self):
-        pass
-
-
-class MockProtocol(Protocol):
-    def __init__(self):
-        self.transport: Transport = MockTransport()
+from unittest.mock import patch, AsyncMock, Mock
 
 
 class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
     def patch_socket(func):
-        async def create_connection(
-            self,
-            protocol_factory,
-            host=None,
-            port=None,
-            *,
-            ssl=None,
-            family=0,
-            proto=0,
-            flags=0,
-            sock=None,
-            local_addr=None,
-            server_hostname=None,
-            ssl_handshake_timeout=None,
-            ssl_shutdown_timeout=None,
-            happy_eyeballs_delay=None,
-            interleave=None,
-            all_errors=False,
-        ):
-            return None
-
-        def state_changed(self):
-            pass
-
-        def create_protocol(self):
-            return MockProtocol()
-
         async def wrapper(*args, **kwargs):
+            state_changed_mock = Mock()
+            create_connection_mock = AsyncMock()
+            create_protocol_mock = Mock(spec=Protocol)
+
             with (
-                patch("asyncio.BaseEventLoop.create_connection", new=create_connection),
+                patch(
+                    "asyncio.BaseEventLoop.create_connection",
+                    new=create_connection_mock,
+                ),
                 patch(
                     "pyaprilaire.socket_client.SocketClient.state_changed",
-                    new=state_changed,
+                    new=state_changed_mock,
                 ),
                 patch(
                     "pyaprilaire.socket_client.SocketClient.create_protocol",
-                    new=create_protocol,
+                    new=create_protocol_mock,
                 ),
             ):
                 await func(*args, **kwargs)
@@ -71,106 +37,96 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.logger = logging.getLogger()
         self.logger.propagate = False
+        self.client = SocketClient(None, None, None, self.logger)
 
     @patch_socket
     async def test_client_status(self):
-        client = SocketClient("", 0, lambda x: (), None)
+        await self.client.start_listen()
 
-        await client.start_listen()
+        self.assertFalse(self.client.stopped)
+        self.assertTrue(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
 
-        self.assertFalse(client.stopped)
-        self.assertTrue(client.connected)
-        self.assertFalse(client.reconnecting)
+        self.client._disconnect()
 
-        client._disconnect()
+        self.assertFalse(self.client.stopped)
+        self.assertFalse(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
 
-        self.assertFalse(client.stopped)
-        self.assertFalse(client.connected)
-        self.assertFalse(client.reconnecting)
+        self.client.stop_listen()
 
-        client.stop_listen()
-
-        self.assertTrue(client.stopped)
-        self.assertFalse(client.connected)
-        self.assertFalse(client.reconnecting)
-
-    async def reconnect_nowait(self, connect_wait_period: int = 0):
-        self.connected = True
-        self.reconnecting = False
+        self.assertTrue(self.client.stopped)
+        self.assertFalse(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
 
     @patch_socket
-    @patch("pyaprilaire.socket_client.SocketClient._reconnect", new=reconnect_nowait)
     async def test_reconnect_loop(self):
-        client = SocketClient("", 0, lambda x: (), None, reconnect_interval=1)
+        async def _reconnect_nowait(self: SocketClient, connect_wait_period: int = 0):
+            self.connected = True
+            self.reconnecting = False
 
-        await client.start_listen()
-        await client._reconnect_loop()
+        with patch(
+            "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
+        ):
+            await self.client.start_listen()
+            await self.client._reconnect_loop()
 
-        self.assertFalse(client.stopped)
-        self.assertTrue(client.connected)
-        self.assertFalse(client.reconnecting)
+        self.assertFalse(self.client.stopped)
+        self.assertTrue(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
 
     @patch_socket
     async def test_reconnect_loop_stopped(self):
-        client = SocketClient("", 0, lambda x: (), None, reconnect_interval=1)
+        await self.client._reconnect_loop()
 
-        await client._reconnect_loop()
-
-        self.assertTrue(client.stopped)
-        self.assertFalse(client.connected)
-        self.assertFalse(client.reconnecting)
+        self.assertTrue(self.client.stopped)
+        self.assertFalse(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
 
     @patch_socket
     async def test_cancel_reconnect_loop(self):
-        client = SocketClient("", 0, lambda x: (), None, reconnect_interval=1000000)
+        self.client.reconnect_interval = 1
+        self.client.connected = True
+        self.client.stopped = False
 
         async def cancel_reconnect_loop():
-            while not client.reconnect_break_future:
+            while not self.client.reconnect_break_future:
                 await asyncio.sleep(0.5)
-            client._cancel_reconnect_loop()
+            self.client._cancel_reconnect_loop()
 
-        client.connected = True
-        client.stopped = False
-        await asyncio.gather(cancel_reconnect_loop(), client._reconnect_loop())
+        await asyncio.gather(cancel_reconnect_loop(), self.client._reconnect_loop())
 
     @patch_socket
     async def test_reconnect(self):
-        client = SocketClient("", 0, lambda x: (), None, reconnect_interval=1000000)
+        self.client.stopped = False
 
         sleep_mock = AsyncMock()
 
         with patch("asyncio.sleep", new=sleep_mock):
-            await client._reconnect(10)
+            await self.client._reconnect(10)
 
         self.assertEqual(sleep_mock.await_count, 1)
+        self.assertFalse(self.client.stopped)
+        self.assertTrue(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
 
-    # @patch_socket
     async def test_reconnect_exception(self):
-        with self.assertLogs(logger=self.logger) as cm:
-            client = SocketClient(
-                "",
-                0,
-                lambda x: (),
-                self.logger,
-                reconnect_interval=1000000,
-            )
+        self.client.stopped = False
 
-            client.stopped = False
+        sleep_mock = AsyncMock()
 
-            sleep_mock = AsyncMock()
+        def create_connection(*args, **kwargs):
+            self.client.stopped = True
+            raise Exception("Test failure")
 
-            def create_connection(*args, **kwargs):
-                client.stopped = True
-                raise Exception("Test failure")
+        create_connection_mock = AsyncMock(side_effect=create_connection)
 
-            create_connection_mock = AsyncMock(side_effect=create_connection)
+        with patch("asyncio.sleep", new=sleep_mock), patch(
+            "asyncio.BaseEventLoop.create_connection", new=create_connection_mock
+        ):
+            await self.client._reconnect(10)
 
-            with patch("asyncio.sleep", new=sleep_mock), patch(
-                "asyncio.BaseEventLoop.create_connection", new=create_connection_mock
-            ):
-                await client._reconnect(10)
-
-            self.assertEqual(sleep_mock.await_count, 1)
-            self.assertTrue(client.stopped)
-            self.assertFalse(client.connected)
-            self.assertTrue(client.reconnecting)
+        self.assertEqual(sleep_mock.await_count, 1)
+        self.assertTrue(self.client.stopped)
+        self.assertFalse(self.client.connected)
+        self.assertTrue(self.client.reconnecting)
