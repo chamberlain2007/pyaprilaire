@@ -548,7 +548,7 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wait_for_response_result, True)
 
     async def test_wait_for_response_timeout(self):
-        wait_for_mock = AsyncMock(side_effect=asyncio.TimeoutError)
+        wait_for_mock = AsyncMock(side_effect=asyncio.exceptions.TimeoutError)
 
         with (
             patch("asyncio.wait_for", new=wait_for_mock),

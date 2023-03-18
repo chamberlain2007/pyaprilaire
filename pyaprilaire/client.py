@@ -362,7 +362,7 @@ class AprilaireClient(SocketClient):
         for future in futures_to_complete:
             try:
                 future.set_result(data)
-            except asyncio.InvalidStateError:
+            except asyncio.exceptions.InvalidStateError:
                 pass
 
     def state_changed(self):
@@ -392,7 +392,7 @@ class AprilaireClient(SocketClient):
 
         try:
             return await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
+        except asyncio.exceptions.TimeoutError:
             self.logger.error(
                 "Hit timeout of %d waiting for %s, %d",
                 timeout,

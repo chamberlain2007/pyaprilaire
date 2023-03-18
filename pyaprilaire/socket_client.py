@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from asyncio.exceptions import CancelledError, InvalidStateError, TimeoutError
 from collections.abc import Callable
 from typing import Any
 from logging import Logger
@@ -33,6 +32,7 @@ class SocketClient:
         self.connected = False
         self.stopped = True
         self.reconnecting = False
+        self.cancelled = False
         self.reconnect_break_future: asyncio.Future = None
 
         self.protocol: asyncio.Protocol = None
@@ -55,9 +55,9 @@ class SocketClient:
                     self.reconnect_break_future, self.reconnect_interval
                 )
                 break
-            except CancelledError:
+            except asyncio.exceptions.CancelledError:
                 break
-            except TimeoutError:
+            except asyncio.exceptions.TimeoutError:
                 await self._reconnect(10)
 
     def _cancel_reconnect_loop(self):
@@ -65,7 +65,7 @@ class SocketClient:
         if self.reconnect_break_future:
             try:
                 self.reconnect_break_future.set_result(True)
-            except InvalidStateError:
+            except asyncio.exceptions.InvalidStateError:
                 pass
             self.reconnect_break_future = None
 
@@ -99,7 +99,7 @@ class SocketClient:
         self.protocol = self.create_protocol()
 
         while True:
-            if self.stopped:
+            if self.stopped or self.cancelled:
                 break
 
             try:

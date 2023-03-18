@@ -61,6 +61,8 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
 
     @patch_socket
     async def test_reconnect_loop(self):
+        self.client.reconnect_interval = 0.01
+
         async def _reconnect_nowait(self: SocketClient, connect_wait_period: int = 0):
             self.connected = True
             self.reconnecting = False
@@ -76,7 +78,31 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.client.reconnecting)
 
     @patch_socket
+    async def test_reconnect_loop_cancelled(self):
+        self.client.reconnect_interval = 0.01
+
+        async def _reconnect_nowait(self: SocketClient, connect_wait_period: int = 0):
+            self.connected = True
+            self.reconnecting = False
+
+        wait_for_mock = AsyncMock(side_effect=asyncio.exceptions.CancelledError)
+
+        with patch(
+            "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
+        ), patch("asyncio.wait_for", new=wait_for_mock):
+            await self.client.start_listen()
+            await self.client._reconnect_loop()
+
+        self.assertFalse(self.client.stopped)
+        self.assertTrue(self.client.connected)
+        self.assertFalse(self.client.reconnecting)
+
+    @patch_socket
     async def test_reconnect_loop_stopped(self):
+        self.client.reconnect_interval = 0.01
+        self.client.connected = False
+        self.client.stopped = True
+
         await self.client._reconnect_loop()
 
         self.assertTrue(self.client.stopped)
@@ -91,10 +117,21 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
 
         async def cancel_reconnect_loop():
             while not self.client.reconnect_break_future:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.01)
             self.client._cancel_reconnect_loop()
 
         await asyncio.gather(cancel_reconnect_loop(), self.client._reconnect_loop())
+
+    @patch_socket
+    async def test_cancel_reconnect_loop_state_error(self):
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        self.client.reconnect_break_future = future
+
+        future.set_result(None)
+
+        self.client._cancel_reconnect_loop()
 
     @patch_socket
     async def test_reconnect(self):
@@ -116,7 +153,7 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
         sleep_mock = AsyncMock()
 
         def create_connection(*args, **kwargs):
-            self.client.stopped = True
+            self.client.cancelled = True
             raise Exception("Test failure")
 
         create_connection_mock = AsyncMock(side_effect=create_connection)
@@ -134,7 +171,23 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
             cm.output, ["ERROR:root:Failed to connect to thermostat: Test failure"]
         )
 
-        self.assertEqual(sleep_mock.await_count, 1)
-        self.assertTrue(self.client.stopped)
+        self.assertEqual(sleep_mock.await_count, 2)
+        self.assertFalse(self.client.stopped)
         self.assertFalse(self.client.connected)
+        self.assertTrue(self.client.reconnecting)
+
+    @patch_socket
+    async def test_reconnect_reconnecting(self):
+        self.client.stopped = False
+        self.client.connected = True
+        self.client.reconnecting = True
+
+        sleep_mock = AsyncMock()
+
+        with patch("asyncio.sleep", new=sleep_mock):
+            await self.client._reconnect(10)
+
+        self.assertEqual(sleep_mock.await_count, 0)
+        self.assertFalse(self.client.stopped)
+        self.assertTrue(self.client.connected)
         self.assertTrue(self.client.reconnecting)
