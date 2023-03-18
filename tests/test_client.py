@@ -1,4 +1,4 @@
-from pyaprilaire.client import _AprilaireClientProtocol
+from pyaprilaire.client import _AprilaireClientProtocol, AprilaireClient
 from pyaprilaire.const import Action, FunctionalDomain
 from pyaprilaire.packet import Packet
 
@@ -10,30 +10,6 @@ from unittest.mock import patch, AsyncMock, Mock
 
 
 class Test_Protocol(unittest.IsolatedAsyncioTestCase):
-    def patch_socket(func):
-        async def wrapper(*args, **kwargs):
-            state_changed_mock = Mock()
-            create_connection_mock = AsyncMock()
-            create_protocol_mock = Mock(spec=Protocol)
-
-            with (
-                patch(
-                    "asyncio.BaseEventLoop.create_connection",
-                    new=create_connection_mock,
-                ),
-                patch(
-                    "pyaprilaire.socket_client.SocketClient.state_changed",
-                    new=state_changed_mock,
-                ),
-                patch(
-                    "pyaprilaire.socket_client.SocketClient.create_protocol",
-                    new=create_protocol_mock,
-                ),
-            ):
-                await func(*args, **kwargs)
-
-        return wrapper
-
     def setUp(self):
         self.logger = logging.getLogger()
         self.logger.propagate = False
@@ -327,3 +303,252 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
         self.protocol._empty_packet_queue()
 
         self.assertEqual(self.protocol.packet_queue.qsize(), 2)
+
+
+class Test_Client(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.logger = logging.getLogger()
+        self.logger.propagate = False
+
+        self.data_received_mock = Mock()
+
+        self.client = AprilaireClient(
+            None, None, self.data_received_mock, self.logger, 10, 10
+        )
+        self.client.protocol = _AprilaireClientProtocol(Mock(), Mock(), self.logger)
+
+    def test_create_protocol(self):
+        protocol = self.client.create_protocol()
+
+        self.assertIsInstance(protocol, _AprilaireClientProtocol)
+
+    async def test_data_received(self):
+        functional_domain = FunctionalDomain.CONTROL
+        attribute = 1
+        data = {"testKey": "testValue"}
+
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        future_key = (functional_domain, attribute)
+
+        if future_key not in self.client.futures:
+            self.client.futures[future_key] = []
+
+        self.client.futures[future_key].append(future)
+
+        await self.client.data_received(functional_domain, attribute, data)
+
+        self.assertEqual(self.data_received_mock.call_count, 1)
+        self.assertEqual(self.data_received_mock.call_args[0][0], data)
+
+        self.assertEqual(future.result(), data)
+
+    async def test_data_received_empty(self):
+        await self.client.data_received(None, None, None)
+
+    async def test_data_received_state_error(self):
+        functional_domain = FunctionalDomain.CONTROL
+        attribute = 1
+
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+
+        future_key = (functional_domain, attribute)
+
+        if future_key not in self.client.futures:
+            self.client.futures[future_key] = []
+
+        self.client.futures[future_key].append(future)
+
+        future.set_result({})
+
+        await self.client.data_received(functional_domain, attribute, {})
+
+    def test_state_changed(self):
+        self.client.connected = True
+        self.client.stopped = True
+        self.client.reconnecting = True
+
+        self.client.state_changed()
+
+        self.assertEqual(self.data_received_mock.call_count, 1)
+        self.assertEqual(
+            self.data_received_mock.call_args[0][0],
+            {"connected": True, "stopped": True, "reconnecting": True},
+        )
+
+    def assertPacketQueueContains(self, packet: Packet):
+        queue_items = list(self.client.protocol.packet_queue._queue)
+
+        self.assertEqual(any(qp == packet for qp in queue_items), True)
+
+    async def test_read_sensors(self):
+        await self.client.read_sensors()
+
+        self.assertPacketQueueContains(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+        )
+
+    async def test_read_control(self):
+        await self.client.read_control()
+
+        self.assertPacketQueueContains(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+        )
+
+    async def test_read_scheduling(self):
+        await self.client.read_scheduling()
+
+        self.assertPacketQueueContains(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 4)
+        )
+
+    async def test_update_mode(self):
+        await self.client.update_mode(1)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                1,
+                data={
+                    "mode": 1,
+                    "fan_mode": 0,
+                    "heat_setpoint": 0,
+                    "cool_setpoint": 0,
+                },
+            )
+        )
+
+    async def test_update_fan_mode(self):
+        await self.client.update_fan_mode(1)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                1,
+                data={
+                    "mode": 0,
+                    "fan_mode": 1,
+                    "heat_setpoint": 0,
+                    "cool_setpoint": 0,
+                },
+            )
+        )
+
+    async def test_update_setpoint(self):
+        await self.client.update_setpoint(10, 20)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                1,
+                data={
+                    "mode": 0,
+                    "fan_mode": 0,
+                    "heat_setpoint": 20,
+                    "cool_setpoint": 10,
+                },
+            )
+        )
+
+    async def test_set_hold(self):
+        await self.client.set_hold(1)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.SCHEDULING,
+                4,
+                data={
+                    "hold": 1,
+                },
+            )
+        )
+
+    async def test_sync(self):
+        await self.client.sync()
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.STATUS,
+                2,
+                data={
+                    "synced": 1,
+                },
+            )
+        )
+
+    async def test_configure_cos(self):
+        pass
+
+    async def test_read_mac_address(self):
+        await self.client.read_mac_address()
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.READ_REQUEST,
+                FunctionalDomain.IDENTIFICATION,
+                2,
+            )
+        )
+
+    async def test_read_thermostat_status(self):
+        await self.client.read_thermostat_status()
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.READ_REQUEST,
+                FunctionalDomain.CONTROL,
+                7,
+            )
+        )
+
+    async def test_read_thermostat_name(self):
+        await self.client.read_thermostat_name()
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.READ_REQUEST,
+                FunctionalDomain.IDENTIFICATION,
+                5,
+            )
+        )
+
+    async def test_wait_for_response_success(self):
+        wait_for_mock = AsyncMock(return_value=True)
+
+        with patch("asyncio.wait_for", new=wait_for_mock):
+            wait_for_response_result = await self.client.wait_for_response(
+                FunctionalDomain.CONTROL, 1, 1
+            )
+
+        self.assertEqual(wait_for_response_result, True)
+
+    async def test_wait_for_response_timeout(self):
+        wait_for_mock = AsyncMock(side_effect=asyncio.TimeoutError)
+
+        with patch("asyncio.wait_for", new=wait_for_mock):
+            wait_for_response_result = await self.client.wait_for_response(
+                FunctionalDomain.CONTROL, 1, 1
+            )
+
+        self.assertEqual(wait_for_response_result, None)
+
+    async def test_reconnect_with_delay(self):
+        reconnect_mock = AsyncMock()
+
+        with patch(
+            "pyaprilaire.socket_client.SocketClient._reconnect", new=reconnect_mock
+        ):
+            await self.client._reconnect_with_delay()
+
+            self.assertEqual(reconnect_mock.call_count, 1)
+            self.assertEqual(
+                reconnect_mock.call_args[0][0],
+                self.client.retry_connection_interval,
+            )
