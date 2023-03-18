@@ -2,18 +2,7 @@
 
 from __future__ import annotations
 
-from asyncio import (
-    ensure_future,
-    get_event_loop,
-    sleep,
-    wait_for,
-    Future,
-    Queue,
-    QueueEmpty,
-    Protocol,
-    Transport,
-)
-from asyncio.exceptions import InvalidStateError, TimeoutError
+import asyncio
 
 from collections.abc import Callable
 from logging import Logger
@@ -24,7 +13,7 @@ from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 
 
-class _AprilaireClientProtocol(Protocol):
+class _AprilaireClientProtocol(asyncio.Protocol):
     """Protocol for interacting with the thermostat over socket connection"""
 
     def __init__(
@@ -38,9 +27,9 @@ class _AprilaireClientProtocol(Protocol):
         self.reconnect_action = reconnect_action
         self.logger = logger
 
-        self.transport: Transport = None
+        self.transport: asyncio.Transport = None
 
-        self.packet_queue = Queue()
+        self.packet_queue = asyncio.Queue()
 
         self.sequence = 0
 
@@ -72,9 +61,12 @@ class _AprilaireClientProtocol(Protocol):
         except:  # pylint: disable=bare-except
             pass
 
-    async def _queue_loop(self):
+    async def _queue_loop(self, loop_count=None):
         """Periodically send items from the queue"""
-        while True:
+        while loop_count is None or loop_count > 0:
+            if loop_count is not None:
+                loop_count -= 1
+
             try:
                 packet: Packet
 
@@ -85,32 +77,31 @@ class _AprilaireClientProtocol(Protocol):
                         self.logger.info("Sent data: %s", serialized_packet.hex(" "))
 
                         self.transport.write(serialized_packet)
-            except QueueEmpty:
+            except asyncio.QueueEmpty:
                 pass
 
-            await sleep(QUEUE_FREQUENCY)
+            await asyncio.sleep(QUEUE_FREQUENCY)
 
-    def connection_made(self, transport: Transport):
+    async def _update_status(self):
+        await asyncio.sleep(2)
+
+        await self.read_mac_address()
+        await self.read_thermostat_status()
+        await self.read_control()
+        await self.read_sensors()
+        await self.read_thermostat_name()
+        await self.configure_cos()
+        await self.sync()
+
+    def connection_made(self, transport: asyncio.Transport):
         """Called when a connection has been made to the socket"""
         self.logger.info("Aprilaire connection made")
 
         self.transport = transport
         self._empty_packet_queue()
 
-        ensure_future(self._queue_loop())
-
-        async def _update_status():
-            await sleep(2)
-
-            await self.read_mac_address()
-            await self.read_thermostat_status()
-            await self.read_control()
-            await self.read_sensors()
-            await self.read_thermostat_name()
-            await self.configure_cos()
-            await self.sync()
-
-        ensure_future(_update_status())
+        asyncio.ensure_future(self._queue_loop())
+        asyncio.ensure_future(self._update_status())
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
@@ -146,12 +137,12 @@ class _AprilaireClientProtocol(Protocol):
             ):
                 self.logger.info("Re-reading control because of COS with mode==1")
 
-                ensure_future(self.read_control())
+                asyncio.ensure_future(self.read_control())
 
                 continue
 
             if self.data_received_callback:
-                ensure_future(
+                asyncio.ensure_future(
                     self.data_received_callback(
                         packet.functional_domain, packet.attribute, packet.data
                     )
@@ -162,7 +153,7 @@ class _AprilaireClientProtocol(Protocol):
         self.logger.info("Aprilaire connection lost")
 
         if self.data_received_callback:
-            ensure_future(
+            asyncio.ensure_future(
                 self.data_received_callback(
                     FunctionalDomain.NONE, 0, {"available": False}
                 )
@@ -171,7 +162,7 @@ class _AprilaireClientProtocol(Protocol):
         self.transport = None
 
         if self.reconnect_action:
-            ensure_future(self.reconnect_action())
+            asyncio.ensure_future(self.reconnect_action())
 
     async def read_sensors(self):
         """Send a request for updated sensor data"""
@@ -345,7 +336,7 @@ class AprilaireClient(SocketClient):
             retry_connection_interval,
         )
 
-        self.futures: dict[tuple[FunctionalDomain, int], list[Future]] = {}
+        self.futures: dict[tuple[FunctionalDomain, int], list[asyncio.Future]] = {}
 
     async def _reconnect_with_delay(self):
         await super()._reconnect(self.retry_connection_interval)
@@ -371,7 +362,7 @@ class AprilaireClient(SocketClient):
         for future in futures_to_complete:
             try:
                 future.set_result(data)
-            except InvalidStateError:
+            except asyncio.exceptions.InvalidStateError:
                 pass
 
     def state_changed(self):
@@ -389,7 +380,7 @@ class AprilaireClient(SocketClient):
     ):
         """Wait for a response for a particular request"""
 
-        loop = get_event_loop()
+        loop = asyncio.get_event_loop()
         future = loop.create_future()
 
         future_key = (functional_domain, attribute)
@@ -400,8 +391,8 @@ class AprilaireClient(SocketClient):
         self.futures[future_key].append(future)
 
         try:
-            return await wait_for(future, timeout)
-        except TimeoutError:
+            return await asyncio.wait_for(future, timeout)
+        except asyncio.exceptions.TimeoutError:
             self.logger.error(
                 "Hit timeout of %d waiting for %s, %d",
                 timeout,
@@ -445,6 +436,10 @@ class AprilaireClient(SocketClient):
     async def read_mac_address(self):
         """Send a request to read the MAC address"""
         await self.protocol.read_mac_address()
+
+    async def read_thermostat_status(self):
+        """Send a request to read the thermostat status"""
+        await self.protocol.read_thermostat_status()
 
     async def read_thermostat_name(self):
         """Send a request to read the thermostat name"""
