@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from asyncio import (
     ensure_future,
     get_event_loop,
@@ -74,7 +75,7 @@ class _AprilaireClientProtocol(Protocol):
 
     async def _queue_loop(self):
         """Periodically send items from the queue"""
-        while True:
+        while self.transport is not None:
             try:
                 packet: Packet
 
@@ -88,7 +89,18 @@ class _AprilaireClientProtocol(Protocol):
             except QueueEmpty:
                 pass
 
-            await sleep(QUEUE_FREQUENCY)
+            await asyncio.sleep(QUEUE_FREQUENCY)
+
+    async def _update_status(self):
+        await asyncio.sleep(2)
+
+        await self.read_mac_address()
+        await self.read_thermostat_status()
+        await self.read_control()
+        await self.read_sensors()
+        await self.read_thermostat_name()
+        await self.configure_cos()
+        await self.sync()
 
     def connection_made(self, transport: Transport):
         """Called when a connection has been made to the socket"""
@@ -98,19 +110,7 @@ class _AprilaireClientProtocol(Protocol):
         self._empty_packet_queue()
 
         ensure_future(self._queue_loop())
-
-        async def _update_status():
-            await sleep(2)
-
-            await self.read_mac_address()
-            await self.read_thermostat_status()
-            await self.read_control()
-            await self.read_sensors()
-            await self.read_thermostat_name()
-            await self.configure_cos()
-            await self.sync()
-
-        ensure_future(_update_status())
+        ensure_future(self._update_status())
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""

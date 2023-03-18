@@ -492,6 +492,14 @@ class Packet:
         result.append(self._generate_crc(result))
         return bytes(result)
 
+    def __eq__(self, other):
+        return (
+            self.action == other.action
+            and self.functional_domain == other.functional_domain
+            and self.attribute == other.attribute
+            and self.data == other.data
+        )
+
 
 class NackPacket(Packet):
     def __init__(
