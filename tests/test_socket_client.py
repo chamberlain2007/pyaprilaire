@@ -121,10 +121,18 @@ class Test_Socket_Client(unittest.IsolatedAsyncioTestCase):
 
         create_connection_mock = AsyncMock(side_effect=create_connection)
 
-        with patch("asyncio.sleep", new=sleep_mock), patch(
-            "asyncio.BaseEventLoop.create_connection", new=create_connection_mock
+        with (
+            patch("asyncio.sleep", new=sleep_mock),
+            patch(
+                "asyncio.BaseEventLoop.create_connection", new=create_connection_mock
+            ),
+            self.assertLogs(self.logger, level="ERROR") as cm,
         ):
             await self.client._reconnect(10)
+
+        self.assertEqual(
+            cm.output, ["ERROR:root:Failed to connect to thermostat: Test failure"]
+        )
 
         self.assertEqual(sleep_mock.await_count, 1)
         self.assertTrue(self.client.stopped)

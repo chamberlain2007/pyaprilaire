@@ -59,13 +59,18 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_data_received_nack(self):
-        self.protocol.data_received(bytes([1, 1, 0, 2, 6, 1, 0]))
+        with self.assertLogs(self.logger, level="ERROR") as cm:
+            self.protocol.data_received(bytes([1, 1, 0, 2, 6, 1, 0]))
+
+        self.assertEqual(cm.output, ["ERROR:root:Received NACK for attribute 1"])
 
         self.assertEqual(self.data_received_mock.call_count, 0)
 
     def test_data_received_error(self):
-        crc = Packet._generate_crc([1, 1, 0, 4, 3, 7, 8, 2])
-        self.protocol.data_received(bytes([1, 1, 0, 4, 3, 7, 8, 2, 149]))
+        with self.assertLogs(self.logger, level="ERROR") as cm:
+            self.protocol.data_received(bytes([1, 1, 0, 4, 3, 7, 8, 2, 149]))
+
+        self.assertEqual(cm.output, ["ERROR:root:Thermostat error: 2"])
 
         self.assertEqual(self.data_received_mock.call_count, 1)
 
@@ -532,10 +537,15 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
     async def test_wait_for_response_timeout(self):
         wait_for_mock = AsyncMock(side_effect=asyncio.TimeoutError)
 
-        with patch("asyncio.wait_for", new=wait_for_mock):
+        with (
+            patch("asyncio.wait_for", new=wait_for_mock),
+            self.assertLogs(self.logger, level="ERROR") as cm,
+        ):
             wait_for_response_result = await self.client.wait_for_response(
                 FunctionalDomain.CONTROL, 1, 1
             )
+
+        self.assertEqual(cm.output, ["ERROR:root:Hit timeout of 1 waiting for 2, 1"])
 
         self.assertEqual(wait_for_response_result, None)
 
