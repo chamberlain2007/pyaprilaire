@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-from asyncio import (
-    ensure_future,
-    get_event_loop,
-    sleep,
-    wait_for,
-    Future,
-    Protocol,
-)
 import asyncio
 from asyncio.exceptions import CancelledError, InvalidStateError, TimeoutError
 from collections.abc import Callable
@@ -41,9 +33,9 @@ class SocketClient:
         self.connected = False
         self.stopped = True
         self.reconnecting = False
-        self.reconnect_break_future: Future = None
+        self.reconnect_break_future: asyncio.Future = None
 
-        self.protocol: Protocol = None
+        self.protocol: asyncio.Protocol = None
 
     async def _reconnect_loop(self):
         """Wait for cancellable reconnect interval to pass, and perform reconnect"""
@@ -55,11 +47,13 @@ class SocketClient:
                 break
 
             if not self.reconnect_break_future:
-                loop = get_event_loop()
+                loop = asyncio.get_event_loop()
                 self.reconnect_break_future = loop.create_future()
 
             try:
-                await wait_for(self.reconnect_break_future, self.reconnect_interval)
+                await asyncio.wait_for(
+                    self.reconnect_break_future, self.reconnect_interval
+                )
                 break
             except CancelledError:
                 break
@@ -109,7 +103,7 @@ class SocketClient:
                 break
 
             try:
-                await get_event_loop().create_connection(
+                await asyncio.get_event_loop().create_connection(
                     lambda: self.protocol,
                     self.host,
                     self.port,
@@ -120,7 +114,7 @@ class SocketClient:
 
                 self.state_changed()
 
-                ensure_future(self._reconnect_loop())
+                asyncio.ensure_future(self._reconnect_loop())
 
                 break
 
@@ -148,7 +142,7 @@ class SocketClient:
 
         self._disconnect()
 
-    def create_protocol(self) -> Protocol:
+    def create_protocol(self) -> asyncio.Protocol:
         """Create the socket protocol (implemented in derived class)"""
         return None
 
