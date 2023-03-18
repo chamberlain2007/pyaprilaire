@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from crc import Calculator, Configuration
 from enum import Enum
 import math
@@ -262,7 +263,7 @@ class Packet:
         self.raw_data = raw_data
 
     @classmethod
-    def parse(self, data: bytes) -> list[Packet]:
+    def parse(self, data: bytes) -> Iterator[Packet]:
         data_index = 0
 
         while data_index < len(data):
@@ -303,6 +304,7 @@ class Packet:
 
             # Skip header
             final_index = data_index + count + 3
+            payload_start_index = data_index
             data_index += 7
             attribute_index = 0
 
@@ -379,7 +381,10 @@ class Packet:
 
                     attribute_index += 1
 
-            yield packet
+            crc = data[data_index]
+
+            if Packet._verify_crc(data[payload_start_index:data_index], crc):
+                yield packet
 
             data_index += 1
 
@@ -400,7 +405,7 @@ class Packet:
         is_fraction = temperature % 1 >= 0.5
 
         return (
-            math.floor(temperature)
+            math.floor(abs(temperature))
             + (64 if is_fraction else 0)
             + (128 if is_negative else 0)
         )
@@ -425,7 +430,7 @@ class Packet:
     @classmethod
     def _decode_humidity(self, raw_value: int) -> int:
         """Decode a humidity value from the thermostat"""
-        if raw_value == 0 or raw_value >= 100:
+        if raw_value <= 0 or raw_value >= 100:
             return None
         return raw_value
 
@@ -486,6 +491,14 @@ class Packet:
         result.extend(payload)
         result.append(self._generate_crc(result))
         return bytes(result)
+
+    def __eq__(self, other):
+        return (
+            self.action == other.action
+            and self.functional_domain == other.functional_domain
+            and self.attribute == other.attribute
+            and self.data == other.data
+        )
 
 
 class NackPacket(Packet):

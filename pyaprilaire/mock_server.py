@@ -3,20 +3,11 @@
 from __future__ import annotations
 
 import argparse
-from asyncio import (
-    ensure_future,
-    new_event_loop,
-    set_event_loop,
-    sleep,
-    Queue,
-    QueueEmpty,
-    Protocol,
-    Transport,
-)
+import asyncio
 import logging
 
 from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
-from .packet import NackPacket, Packet
+from .packet import Packet
 
 COS_FREQUENCY = 30
 
@@ -57,9 +48,9 @@ ch.setFormatter(CustomFormatter())
 _LOGGER.addHandler(ch)
 
 
-class _AprilaireServerProtocol(Protocol):
+class _AprilaireServerProtocol(asyncio.Protocol):
     def __init__(self):
-        self.transport: Transport = None
+        self.transport: asyncio.Transport = None
 
         self.mode = 5
         self.fan_mode = 2
@@ -71,7 +62,7 @@ class _AprilaireServerProtocol(Protocol):
         self.location = "02134"
         self.mac_address = [1, 2, 3, 4, 5, 6]
 
-        self.packet_queue = Queue()
+        self.packet_queue = asyncio.Queue()
 
         self.sequence = 0
 
@@ -240,7 +231,7 @@ class _AprilaireServerProtocol(Protocol):
     async def _cos_loop(self):
         """Send the current status (COS) periodically"""
         while self.transport:
-            await sleep(COS_FREQUENCY)
+            await asyncio.sleep(COS_FREQUENCY)
             await self._send_status()
 
     async def _queue_loop(self):
@@ -256,18 +247,18 @@ class _AprilaireServerProtocol(Protocol):
                         _LOGGER.info("Sent data: %s", serialized_packet.hex(" "))
 
                         self.transport.write(serialized_packet)
-            except QueueEmpty:
+            except asyncio.QueueEmpty:
                 pass
 
-            await sleep(QUEUE_FREQUENCY)
+            await asyncio.sleep(QUEUE_FREQUENCY)
 
     def connection_made(self, transport):
         _LOGGER.info("Connection made")
 
         self.transport = transport
 
-        ensure_future(self._cos_loop())
-        ensure_future(self._queue_loop())
+        asyncio.ensure_future(self._cos_loop())
+        asyncio.ensure_future(self._queue_loop())
 
     def data_received(self, data: bytes) -> None:
         _LOGGER.info("Received data: %s", data.hex(" ", 1))
@@ -455,7 +446,7 @@ class _AprilaireServerProtocol(Protocol):
                         )
                 elif packet.functional_domain == FunctionalDomain.STATUS:
                     if packet.attribute == 2:
-                        ensure_future(self._send_status())
+                        asyncio.ensure_future(self._send_status())
 
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
@@ -469,8 +460,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    loop = new_event_loop()
-    set_event_loop(loop)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     loop.create_task(loop.create_server(_AprilaireServerProtocol, args.host, args.port))
 
