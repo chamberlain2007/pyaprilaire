@@ -39,6 +39,19 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.protocol.packet_queue.qsize(), 7)
         self.assertEqual(sleep_mock.call_count, 1)
 
+    async def test_queue_loop(self):
+        await self.protocol.read_control()
+        await self.protocol.read_scheduling()
+
+        sleep_mock = AsyncMock()
+        self.protocol.transport = Mock(asyncio.Transport)
+
+        with patch("asyncio.sleep", new=sleep_mock):
+            await self.protocol._queue_loop(loop_count=1)
+
+        self.assertEqual(sleep_mock.call_count, 1)
+        self.assertEqual(self.protocol.transport.write.call_count, 2)
+
     def test_data_received(self):
         self.protocol.data_received(bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]))
 

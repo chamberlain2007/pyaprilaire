@@ -61,9 +61,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         except:  # pylint: disable=bare-except
             pass
 
-    async def _queue_loop(self):
+    async def _queue_loop(self, loop_count=None):
         """Periodically send items from the queue"""
-        while self.transport is not None:
+        while loop_count is None or loop_count > 0:
+            if loop_count is not None:
+                loop_count -= 1
+
             try:
                 packet: Packet
 
