@@ -265,6 +265,9 @@ class Packet:
     def test():
         return 5
 
+    def test2():
+        return 6
+
     @classmethod
     def parse(self, data: bytes) -> Iterator[Packet]:
         data_index = 0
