@@ -262,12 +262,6 @@ class Packet:
         self.data = data or {}
         self.raw_data = raw_data
 
-    def test():
-        return 5
-
-    def test2():
-        return 6
-
     @classmethod
     def parse(self, data: bytes) -> Iterator[Packet]:
         data_index = 0
