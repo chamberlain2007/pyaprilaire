@@ -487,6 +487,34 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_set_dehumidification_setpoint(self):
+        await self.client.set_dehumidification_setpoint(50)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                3,
+                data={
+                    "dehumidification_setpoint": 50,
+                },
+            )
+        )
+
+    async def test_set_humidification_setpoint(self):
+        await self.client.set_humidification_setpoint(50)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                4,
+                data={
+                    "humidification_setpoint": 50,
+                },
+            )
+        )
+
     async def test_sync(self):
         await self.client.sync()
 

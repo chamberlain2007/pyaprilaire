@@ -242,6 +242,26 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
+    async def set_dehumidification_setpoint(self, dehumidification_setpoint):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                3,
+                data={"dehumidification_setpoint": dehumidification_setpoint},
+            )
+        )
+
+    async def set_humidification_setpoint(self, humidification_setpoint):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                4,
+                data={"humidification_setpoint": humidification_setpoint},
+            )
+        )
+
     async def sync(self):
         """Send a request to sync data"""
         await self._send_packet(
@@ -444,3 +464,9 @@ class AprilaireClient(SocketClient):
     async def read_thermostat_name(self):
         """Send a request to read the thermostat name"""
         await self.protocol.read_thermostat_name()
+
+    async def set_dehumidification_setpoint(self, dehumidification_setpoint: int):
+        await self.protocol.set_dehumidification_setpoint(dehumidification_setpoint)
+
+    async def set_humidification_setpoint(self, humidification_setpoint: int):
+        await self.protocol.set_humidification_setpoint(humidification_setpoint)

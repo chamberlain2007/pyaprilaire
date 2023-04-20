@@ -57,6 +57,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.cool_setpoint = 25
         self.heat_setpoint = 20
         self.hold = 0
+        self.dehumidification_setpoint = 60
+        self.humidification_setpoint = 50
 
         self.name = "Mock"
         self.location = "02134"
@@ -225,6 +227,26 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     "progressive_recovery": 0,
                     "fan_status": 1 if self.fan_mode == 1 or self.fan_mode == 2 else 0,
                 },
+            )
+        )
+
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.CONTROL,
+                3,
+                sequence=self._get_sequence(),
+                data={"dehumidification_setpoint": self.dehumidification_setpoint},
+            )
+        )
+
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.CONTROL,
+                3,
+                sequence=self._get_sequence(),
+                data={"humidification_setpoint": self.humidification_setpoint},
             )
         )
 
@@ -427,6 +449,36 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 4,
                                 sequence=self._get_sequence(),
                                 data={"hold": self.hold},
+                            )
+                        )
+                    elif packet.attribute == 3:
+                        self.dehumidification_setpoint = packet[
+                            "dehumidification_setpoint"
+                        ]
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.CONTROL,
+                                3,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "dehumidification_setpoint": self.dehumidification_setpoint
+                                },
+                            )
+                        )
+                    elif packet.attribute == 4:
+                        self.humidification_setpoint = packet["humidification_setpoint"]
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.CONTROL,
+                                3,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "humidification_setpoint": self.humidification_setpoint
+                                },
                             )
                         )
 
