@@ -36,7 +36,7 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
         with patch("asyncio.sleep", new=sleep_mock):
             await self.protocol._update_status()
 
-        self.assertEqual(self.protocol.packet_queue.qsize(), 7)
+        self.assertEqual(self.protocol.packet_queue.qsize(), 9)
         self.assertEqual(sleep_mock.call_count, 1)
 
     async def test_queue_loop(self):
