@@ -59,6 +59,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.hold = 0
         self.dehumidification_setpoint = 60
         self.humidification_setpoint = 50
+        self.fresh_air_mode = 1
+        self.fresh_air_event = 2
+        self.air_cleaning_mode = 1
+        self.air_cleaning_event = 4
 
         self.name = "Mock"
         self.location = "02134"
@@ -244,9 +248,35 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
-                3,
+                4,
                 sequence=self._get_sequence(),
                 data={"humidification_setpoint": self.humidification_setpoint},
+            )
+        )
+
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.CONTROL,
+                5,
+                sequence=self._get_sequence(),
+                data={
+                    "fresh_air_mode": self.fresh_air_mode,
+                    "fresh_air_event": self.fresh_air_event,
+                },
+            )
+        )
+
+        await self.packet_queue.put(
+            Packet(
+                Action.COS,
+                FunctionalDomain.CONTROL,
+                6,
+                sequence=self._get_sequence(),
+                data={
+                    "air_cleaning_mode": self.air_cleaning_mode,
+                    "air_cleaning_event": self.air_cleaning_event,
+                },
             )
         )
 
@@ -478,6 +508,38 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 sequence=self._get_sequence(),
                                 data={
                                     "humidification_setpoint": self.humidification_setpoint
+                                },
+                            )
+                        )
+                    elif packet.attribute == 5:
+                        self.fresh_air_mode = packet["fresh_air_mode"]
+                        self.fresh_air_event = packet["fresh_air_event"]
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.CONTROL,
+                                5,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "fresh_air_mode": self.fresh_air_mode,
+                                    "fresh_air_event": self.fresh_air_event,
+                                },
+                            )
+                        )
+                    elif packet.attribute == 6:
+                        self.air_cleaning_mode = packet["air_cleaning_mode"]
+                        self.air_cleaning_event = packet["air_cleaning_event"]
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.CONTROL,
+                                6,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "air_cleaning_mode": self.air_cleaning_mode,
+                                    "air_cleaning_event": self.air_cleaning_event,
                                 },
                             )
                         )

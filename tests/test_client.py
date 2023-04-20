@@ -515,6 +515,36 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_set_fresh_air(self):
+        await self.client.set_fresh_air(1, 3)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                5,
+                data={
+                    "fresh_air_mode": 1,
+                    "fresh_air_event": 3,
+                },
+            )
+        )
+
+    async def test_set_air_cleaning(self):
+        await self.client.set_air_cleaning(1, 3)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                6,
+                data={
+                    "air_cleaning_mode": 1,
+                    "air_cleaning_event": 3,
+                },
+            )
+        )
+
     async def test_sync(self):
         await self.client.sync()
 

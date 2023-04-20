@@ -242,7 +242,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
-    async def set_dehumidification_setpoint(self, dehumidification_setpoint):
+    async def set_dehumidification_setpoint(self, dehumidification_setpoint: int):
         await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -252,13 +252,33 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
-    async def set_humidification_setpoint(self, humidification_setpoint):
+    async def set_humidification_setpoint(self, humidification_setpoint: int):
         await self._send_packet(
             Packet(
                 Action.WRITE,
                 FunctionalDomain.CONTROL,
                 4,
                 data={"humidification_setpoint": humidification_setpoint},
+            )
+        )
+
+    async def set_fresh_air(self, mode: int, event: int):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                5,
+                data={"fresh_air_mode": mode, "fresh_air_event": event},
+            )
+        )
+
+    async def set_air_cleaning(self, mode: int, event: int):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                6,
+                data={"air_cleaning_mode": mode, "air_cleaning_event": event},
             )
         )
 
@@ -470,3 +490,9 @@ class AprilaireClient(SocketClient):
 
     async def set_humidification_setpoint(self, humidification_setpoint: int):
         await self.protocol.set_humidification_setpoint(humidification_setpoint)
+
+    async def set_fresh_air(self, mode: int, event: int):
+        await self.protocol.set_fresh_air(mode, event)
+
+    async def set_air_cleaning(self, mode: int, event: int):
+        await self.protocol.set_air_cleaning(mode, event)
