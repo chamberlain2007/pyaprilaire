@@ -91,6 +91,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         await self.read_sensors()
         await self.read_thermostat_name()
         await self.configure_cos()
+        await self.read_dehumidification_setpoint()
+        await self.read_humidification_setpoint()
         await self.sync()
 
     def connection_made(self, transport: asyncio.Transport):
@@ -350,6 +352,18 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Send a reques for the thermostat name"""
         await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5)
+        )
+
+    async def read_dehumidification_setpoint(self):
+        """Send a request for the dehumidification setpoint"""
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 3)
+        )
+
+    async def read_humidification_setpoint(self):
+        """Send a request for the humidification setpoint"""
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 4)
         )
 
 
