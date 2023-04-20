@@ -58,7 +58,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.heat_setpoint = 20
         self.hold = 0
         self.dehumidification_setpoint = 60
-        self.humidification_setpoint = 50
+        self.humidification_setpoint = 30
         self.fresh_air_mode = 1
         self.fresh_air_event = 2
         self.air_cleaning_mode = 1
