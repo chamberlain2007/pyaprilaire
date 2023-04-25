@@ -91,6 +91,20 @@ MAPPING = {
                 ("heat_setpoint", ValueType.TEMPERATURE_REQUIRED),
                 ("cool_setpoint", ValueType.TEMPERATURE_REQUIRED),
             ],
+            3: [
+                ("dehumidification_setpoint", ValueType.HUMIDITY),
+            ],
+            4: [
+                ("humidification_setpoint", ValueType.HUMIDITY),
+            ],
+            5: [
+                ("fresh_air_mode", ValueType.INTEGER),
+                ("fresh_air_event", ValueType.INTEGER),
+            ],
+            6: [
+                ("air_cleaning_mode", ValueType.INTEGER),
+                ("air_cleaning_event", ValueType.INTEGER),
+            ],
             7: [
                 ("thermostat_modes", ValueType.INTEGER),
                 ("air_cleaning_available", ValueType.INTEGER),
