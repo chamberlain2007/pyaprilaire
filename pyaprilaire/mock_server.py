@@ -57,12 +57,15 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.cool_setpoint = 25
         self.heat_setpoint = 20
         self.hold = 0
-        self.dehumidification_setpoint = 60
-        self.humidification_setpoint = 30
-        self.fresh_air_mode = 1
-        self.fresh_air_event = 2
-        self.air_cleaning_mode = 1
-        self.air_cleaning_event = 4
+
+        self.dehumidification_status = 0
+        self.dehumidification_setpoint = 30
+        self.humidification_status = 0
+        self.humidification_setpoint = 40
+        self.fresh_air_mode = 0
+        self.fresh_air_event = 0
+        self.air_cleaning_mode = 0
+        self.air_cleaning_event = 0
 
         self.name = "Mock"
         self.location = "02134"
@@ -144,10 +147,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 7,
                 sequence=self._get_sequence(),
                 data={
-                    "dehumidification_status": 2,
-                    "humidification_status": 2,
-                    "ventilation_status": 2,
-                    "air_cleaning_status": 2,
+                    "dehumidification_status": self.dehumidification_status,
+                    "humidification_status": self.humidification_status,
+                    "ventilation_status": 2 if self.fresh_air_mode else 0,
+                    "air_cleaning_status": 2 if self.air_cleaning_mode else 0,
                 },
             )
         )
@@ -535,6 +538,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                         self.dehumidification_setpoint = packet.data[
                             "dehumidification_setpoint"
                         ]
+                        self.dehumidification_status = 2
 
                         self.packet_queue.put_nowait(
                             Packet(
@@ -551,6 +555,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                         self.humidification_setpoint = packet.data[
                             "humidification_setpoint"
                         ]
+                        self.humidification_status = 2
 
                         self.packet_queue.put_nowait(
                             Packet(
@@ -579,6 +584,26 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 },
                             )
                         )
+
+                    if packet.attribute in [3, 4, 5]:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.STATUS,
+                                7,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "dehumidification_status": self.dehumidification_status,
+                                    "humidification_status": self.humidification_status,
+                                    "ventilation_status": 2
+                                    if self.fresh_air_mode
+                                    else 0,
+                                    "air_cleaning_status": 2
+                                    if self.air_cleaning_mode
+                                    else 0,
+                                },
+                            )
+                        )
                     elif packet.attribute == 6:
                         self.air_cleaning_mode = packet.data["air_cleaning_mode"]
                         self.air_cleaning_event = packet.data["air_cleaning_event"]
@@ -592,6 +617,25 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 data={
                                     "air_cleaning_mode": self.air_cleaning_mode,
                                     "air_cleaning_event": self.air_cleaning_event,
+                                },
+                            )
+                        )
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.STATUS,
+                                7,
+                                sequence=self._get_sequence(),
+                                data={
+                                    "dehumidification_status": 2,
+                                    "humidification_status": 2,
+                                    "ventilation_status": 2
+                                    if self.fresh_air_mode
+                                    else 0,
+                                    "air_cleaning_status": 2
+                                    if self.air_cleaning_mode
+                                    else 0,
                                 },
                             )
                         )
