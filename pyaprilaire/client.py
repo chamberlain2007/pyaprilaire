@@ -309,13 +309,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                     0,  # Humidity Control Installer Settings
                     0,  # Fresh Air Installer Settings
                     1,  # Thermostat Setpoint & Mode Settings
-                    0,  # Dehumidification Setpoint
-                    0,  # Humidification Setpoint
-                    0,  # Fresh Air Setting
-                    0,  # Air Cleaning Settings
+                    1,  # Dehumidification Setpoint
+                    1,  # Humidification Setpoint
+                    1,  # Fresh Air Settings
+                    1,  # Air Cleaning Settings
                     1,  # Thermostat IAQ Available
                     0,  # Schedule Settings
-                    0,  # Away Settings
+                    1,  # Away Settings
                     0,  # Schedule Day
                     1,  # Schedule Hold
                     0,  # Heat Blast
