@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import logging
 
-from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
+from .const import Action, Attribute, FunctionalDomain, QUEUE_FREQUENCY
 from .packet import Packet
 
 COS_FREQUENCY = 30
@@ -90,7 +90,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.IDENTIFICATION,
                 2,
                 sequence=self._get_sequence(),
-                data={"mac_address": [1, 2, 3, 4, 5, 6]},
+                data={Attribute.MAC_ADDRESS: [1, 2, 3, 4, 5, 6]},
             )
         )
 
@@ -101,10 +101,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 1,
                 sequence=self._get_sequence(),
                 data={
-                    "mode": 1,
-                    "fan_mode": self.fan_mode,
-                    "heat_setpoint": self.heat_setpoint,
-                    "cool_setpoint": self.cool_setpoint,
+                    Attribute.MODE: 1,
+                    Attribute.FAN_MODE: self.fan_mode,
+                    Attribute.HEAT_SETPOINT: self.heat_setpoint,
+                    Attribute.COOL_SETPOINT: self.cool_setpoint,
                 },
             )
         )
@@ -116,14 +116,14 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 2,
                 sequence=self._get_sequence(),
                 data={
-                    "indoor_temperature_controlling_sensor_status": 0,
-                    "indoor_temperature_controlling_sensor_value": 25,
-                    "outdoor_temperature_controlling_sensor_status": 0,
-                    "outdoor_temperature_controlling_sensor_value": 25,
-                    "indoor_humidity_controlling_sensor_status": 0,
-                    "indoor_humidity_controlling_sensor_value": 50,
-                    "outdoor_humidity_controlling_sensor_status": 0,
-                    "outdoor_humidity_controlling_sensor_value": 40,
+                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
+                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
+                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
+                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
+                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
+                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
+                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
+                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 40,
                 },
             )
         )
@@ -135,7 +135,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 2,
                 sequence=self._get_sequence(),
                 data={
-                    "synced": 1,
+                    Attribute.SYNCED: 1,
                 },
             )
         )
@@ -147,10 +147,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 7,
                 sequence=self._get_sequence(),
                 data={
-                    "dehumidification_status": self.dehumidification_status,
-                    "humidification_status": self.humidification_status,
-                    "ventilation_status": 2 if self.fresh_air_mode else 0,
-                    "air_cleaning_status": 2 if self.air_cleaning_mode else 0,
+                    Attribute.DEHUMIDIFICATION_STATUS: self.dehumidification_status,
+                    Attribute.HUMIDIFICATION_STATUS: self.humidification_status,
+                    Attribute.VENTILATION_STATUS: 2 if self.fresh_air_mode else 0,
+                    Attribute.AIR_CLEANING_STATUS: 2 if self.air_cleaning_mode else 0,
                 },
             )
         )
@@ -162,11 +162,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 7,
                 sequence=self._get_sequence(),
                 data={
-                    "thermostat_modes": 6,
-                    "air_cleaning_available": 1,
-                    "ventilation_available": 1,
-                    "dehumidification_available": 1,
-                    "humidification_available": 2,
+                    Attribute.THERMOSTAT_MODES: 6,
+                    Attribute.AIR_CLEANING_AVAILABLE: 1,
+                    Attribute.VENTILATION_AVAILABLE: 1,
+                    Attribute.DEHUMIDIFICATION_AVAILABLE: 1,
+                    Attribute.HUMIDIFICATION_AVAILABLE: 2,
                 },
             )
         )
@@ -177,7 +177,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SETUP,
                 1,
                 sequence=self._get_sequence(),
-                data={"away_available": 1},
+                data={Attribute.AWAY_AVAILABLE: 1},
             )
         )
 
@@ -187,7 +187,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SCHEDULING,
                 4,
                 sequence=self._get_sequence(),
-                data={"hold": self.hold},
+                data={Attribute.HOLD: self.hold},
             )
         )
 
@@ -198,13 +198,13 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 1,
                 sequence=self._get_sequence(),
                 data={
-                    "hardware_revision": 66,
-                    "firmware_major_revision": 10,
-                    "firmware_minor_revision": 2,
-                    "protocol_major_revision": 15,
-                    "model_number": 1,
-                    "gainspan_firmware_major_revision": 14,
-                    "gainspan_firmware_minor_revision": 3,
+                    Attribute.HARDWARE_REVISION: 66,
+                    Attribute.FIRMWARE_MAJOR_REVISION: 10,
+                    Attribute.FIRMWARE_MINOR_REVISION: 2,
+                    Attribute.PROTOCOL_MAJOR_REVISION: 15,
+                    Attribute.MODEL_NUMBER: 1,
+                    Attribute.GAINSPAN_FIRMWARE_MAJOR_REVISION: 14,
+                    Attribute.GAINSPAN_FIRMWARE_MINOR_REVISION: 3,
                 },
             )
         )
@@ -216,8 +216,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 4,
                 sequence=self._get_sequence(),
                 data={
-                    "location": self.location,
-                    "name": self.name,
+                    Attribute.LOCATION: self.location,
+                    Attribute.NAME: self.name,
                 },
             )
         )
@@ -229,10 +229,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 6,
                 sequence=self._get_sequence(),
                 data={
-                    "heating_equipment_status": {2: 2, 4: 7}.get(self.mode, 0),
-                    "cooling_equipment_status": {3: 2, 5: 2}.get(self.mode, 0),
-                    "progressive_recovery": 0,
-                    "fan_status": 1 if self.fan_mode == 1 or self.fan_mode == 2 else 0,
+                    Attribute.HEATING_EQUIPMENT_STATUS: {2: 2, 4: 7}.get(self.mode, 0),
+                    Attribute.COOLING_EQUIPMENT_STATUS: {3: 2, 5: 2}.get(self.mode, 0),
+                    Attribute.PROGRESSIVE_RECOVERY: 0,
+                    Attribute.FAN_STATUS: 1
+                    if self.fan_mode == 1 or self.fan_mode == 2
+                    else 0,
                 },
             )
         )
@@ -243,7 +245,9 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.CONTROL,
                 3,
                 sequence=self._get_sequence(),
-                data={"dehumidification_setpoint": self.dehumidification_setpoint},
+                data={
+                    Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
+                },
             )
         )
 
@@ -253,7 +257,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.CONTROL,
                 4,
                 sequence=self._get_sequence(),
-                data={"humidification_setpoint": self.humidification_setpoint},
+                data={Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint},
             )
         )
 
@@ -264,8 +268,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 5,
                 sequence=self._get_sequence(),
                 data={
-                    "fresh_air_mode": self.fresh_air_mode,
-                    "fresh_air_event": self.fresh_air_event,
+                    Attribute.FRESH_AIR_MODE: self.fresh_air_mode,
+                    Attribute.FRESH_AIR_EVENT: self.fresh_air_event,
                 },
             )
         )
@@ -277,8 +281,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 6,
                 sequence=self._get_sequence(),
                 data={
-                    "air_cleaning_mode": self.air_cleaning_mode,
-                    "air_cleaning_event": self.air_cleaning_event,
+                    Attribute.AIR_CLEANING_MODE: self.air_cleaning_mode,
+                    Attribute.AIR_CLEANING_EVENT: self.air_cleaning_event,
                 },
             )
         )
@@ -331,10 +335,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 1,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "mode": self.mode,
-                                    "fan_mode": self.fan_mode,
-                                    "heat_setpoint": self.heat_setpoint,
-                                    "cool_setpoint": self.cool_setpoint,
+                                    Attribute.MODE: self.mode,
+                                    Attribute.FAN_MODE: self.fan_mode,
+                                    Attribute.HEAT_SETPOINT: self.heat_setpoint,
+                                    Attribute.COOL_SETPOINT: self.cool_setpoint,
                                 },
                             )
                         )
@@ -346,11 +350,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 7,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "thermostat_modes": 6,
-                                    "air_cleaning_available": 1,
-                                    "ventilation_available": 1,
-                                    "dehumidification_available": 1,
-                                    "humidification_available": 1,
+                                    Attribute.THERMOSTAT_MODES: 6,
+                                    Attribute.AIR_CLEANING_AVAILABLE: 1,
+                                    Attribute.VENTILATION_AVAILABLE: 1,
+                                    Attribute.DEHUMIDIFICATION_AVAILABLE: 1,
+                                    Attribute.HUMIDIFICATION_AVAILABLE: 1,
                                 },
                             )
                         )
@@ -362,7 +366,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 3,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "dehumidification_setpoint": self.dehumidification_setpoint
+                                    Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
                                 },
                             )
                         )
@@ -374,7 +378,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 4,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "humidification_setpoint": self.humidification_setpoint
+                                    Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint
                                 },
                             )
                         )
@@ -386,8 +390,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 5,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "fresh_air_mode": self.fresh_air_mode,
-                                    "fresh_air_event": self.fresh_air_event,
+                                    Attribute.FRESH_AIR_MODE: self.fresh_air_mode,
+                                    Attribute.FRESH_AIR_EVENT: self.fresh_air_event,
                                 },
                             )
                         )
@@ -399,8 +403,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 6,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "air_cleaning_mode": self.air_cleaning_mode,
-                                    "air_cleaning_event": self.air_cleaning_event,
+                                    Attribute.AIR_CLEANING_MODE: self.air_cleaning_mode,
+                                    Attribute.AIR_CLEANING_EVENT: self.air_cleaning_event,
                                 },
                             )
                         )
@@ -413,14 +417,14 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 2,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "indoor_temperature_controlling_sensor_status": 0,
-                                    "indoor_temperature_controlling_sensor_value": 25,
-                                    "outdoor_temperature_controlling_sensor_status": 0,
-                                    "outdoor_temperature_controlling_sensor_value": 25,
-                                    "indoor_humidity_controlling_sensor_status": 0,
-                                    "indoor_humidity_controlling_sensor_value": 50,
-                                    "outdoor_humidity_controlling_sensor_status": 0,
-                                    "outdoor_humidity_controlling_sensor_value": 40,
+                                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
+                                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
+                                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
+                                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
+                                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
+                                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
+                                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
+                                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 40,
                                 },
                             )
                         )
@@ -432,7 +436,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 FunctionalDomain.SCHEDULING,
                                 4,
                                 sequence=self._get_sequence(),
-                                data={"hold": self.hold},
+                                data={Attribute.HOLD: self.hold},
                             )
                         )
                 elif packet.functional_domain == FunctionalDomain.IDENTIFICATION:
@@ -443,7 +447,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 FunctionalDomain.IDENTIFICATION,
                                 2,
                                 sequence=self._get_sequence(),
-                                data={"mac_address": self.mac_address},
+                                data={Attribute.MAC_ADDRESS: self.mac_address},
                             )
                         )
                     elif packet.attribute == 4 or packet.attribute == 5:
@@ -454,36 +458,36 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 4,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "location": self.location,
-                                    "name": self.name,
+                                    Attribute.LOCATION: self.location,
+                                    Attribute.NAME: self.name,
                                 },
                             )
                         )
             elif packet.action == Action.WRITE:
                 if packet.functional_domain == FunctionalDomain.CONTROL:
                     if packet.attribute == 1:
-                        if "mode" in packet.data:
-                            new_mode = packet.data["mode"]
+                        if Attribute.MODE in packet.data:
+                            new_mode = packet.data[Attribute.MODE]
 
                             if new_mode != 0:
                                 self.mode = new_mode
                                 self.hold = 0
 
-                        if "fan_mode" in packet.data:
-                            new_fan_mode = packet.data["fan_mode"]
+                        if Attribute.FAN_MODE in packet.data:
+                            new_fan_mode = packet.data[Attribute.FAN_MODE]
 
                             if new_fan_mode != 0:
                                 self.fan_mode = new_fan_mode
 
-                        if "heat_setpoint" in packet.data:
-                            new_heat_setpoint = packet.data["heat_setpoint"]
+                        if Attribute.HEAT_SETPOINT in packet.data:
+                            new_heat_setpoint = packet.data[Attribute.HEAT_SETPOINT]
 
                             if new_heat_setpoint != 0:
                                 self.heat_setpoint = new_heat_setpoint
                                 self.hold = 1
 
-                        if "cool_setpoint" in packet.data:
-                            new_cool_setpoint = packet.data["cool_setpoint"]
+                        if Attribute.COOL_SETPOINT in packet.data:
+                            new_cool_setpoint = packet.data[Attribute.COOL_SETPOINT]
 
                             if new_cool_setpoint != 0:
                                 self.cool_setpoint = new_cool_setpoint
@@ -496,10 +500,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 1,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "mode": self.mode,
-                                    "fan_mode": self.fan_mode,
-                                    "heat_setpoint": self.heat_setpoint,
-                                    "cool_setpoint": self.cool_setpoint,
+                                    Attribute.MODE: self.mode,
+                                    Attribute.FAN_MODE: self.fan_mode,
+                                    Attribute.HEAT_SETPOINT: self.heat_setpoint,
+                                    Attribute.COOL_SETPOINT: self.cool_setpoint,
                                 },
                             )
                         )
@@ -511,14 +515,16 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 6,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "heating_equipment_status": {2: 2, 4: 7}.get(
-                                        self.mode, 0
-                                    ),
-                                    "cooling_equipment_status": {3: 2, 5: 2}.get(
-                                        self.mode, 0
-                                    ),
-                                    "progressive_recovery": 0,
-                                    "fan_status": 1
+                                    Attribute.HEATING_EQUIPMENT_STATUS: {
+                                        2: 2,
+                                        4: 7,
+                                    }.get(self.mode, 0),
+                                    Attribute.COOLING_EQUIPMENT_STATUS: {
+                                        3: 2,
+                                        5: 2,
+                                    }.get(self.mode, 0),
+                                    Attribute.PROGRESSIVE_RECOVERY: 0,
+                                    Attribute.FAN_STATUS: 1
                                     if self.fan_mode == 1 or self.fan_mode == 2
                                     else 0,
                                 },
@@ -531,12 +537,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 FunctionalDomain.SCHEDULING,
                                 4,
                                 sequence=self._get_sequence(),
-                                data={"hold": self.hold},
+                                data={Attribute.HOLD: self.hold},
                             )
                         )
                     elif packet.attribute == 3:
                         self.dehumidification_setpoint = packet.data[
-                            "dehumidification_setpoint"
+                            Attribute.DEHUMIDIFICATION_SETPOINT
                         ]
                         self.dehumidification_status = 2
 
@@ -547,13 +553,13 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 3,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "dehumidification_setpoint": self.dehumidification_setpoint
+                                    Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
                                 },
                             )
                         )
                     elif packet.attribute == 4:
                         self.humidification_setpoint = packet.data[
-                            "humidification_setpoint"
+                            Attribute.HUMIDIFICATION_SETPOINT
                         ]
                         self.humidification_status = 2
 
@@ -564,13 +570,13 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 4,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "humidification_setpoint": self.humidification_setpoint
+                                    Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint
                                 },
                             )
                         )
                     elif packet.attribute == 5:
-                        self.fresh_air_mode = packet.data["fresh_air_mode"]
-                        self.fresh_air_event = packet.data["fresh_air_event"]
+                        self.fresh_air_mode = packet.data[Attribute.FRESH_AIR_MODE]
+                        self.fresh_air_event = packet.data[Attribute.FRESH_AIR_EVENT]
 
                         self.packet_queue.put_nowait(
                             Packet(
@@ -579,8 +585,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 5,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "fresh_air_mode": self.fresh_air_mode,
-                                    "fresh_air_event": self.fresh_air_event,
+                                    Attribute.FRESH_AIR_MODE: self.fresh_air_mode,
+                                    Attribute.FRESH_AIR_EVENT: self.fresh_air_event,
                                 },
                             )
                         )
@@ -593,20 +599,24 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 7,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "dehumidification_status": self.dehumidification_status,
-                                    "humidification_status": self.humidification_status,
-                                    "ventilation_status": 2
+                                    Attribute.DEHUMIDIFICATION_STATUS: self.dehumidification_status,
+                                    Attribute.HUMIDIFICATION_STATUS: self.humidification_status,
+                                    Attribute.VENTILATION_STATUS: 2
                                     if self.fresh_air_mode
                                     else 0,
-                                    "air_cleaning_status": 2
+                                    Attribute.AIR_CLEANING_STATUS: 2
                                     if self.air_cleaning_mode
                                     else 0,
                                 },
                             )
                         )
                     elif packet.attribute == 6:
-                        self.air_cleaning_mode = packet.data["air_cleaning_mode"]
-                        self.air_cleaning_event = packet.data["air_cleaning_event"]
+                        self.air_cleaning_mode = packet.data[
+                            Attribute.AIR_CLEANING_MODE
+                        ]
+                        self.air_cleaning_event = packet.data[
+                            Attribute.AIR_CLEANING_EVENT
+                        ]
 
                         self.packet_queue.put_nowait(
                             Packet(
@@ -615,8 +625,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 6,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "air_cleaning_mode": self.air_cleaning_mode,
-                                    "air_cleaning_event": self.air_cleaning_event,
+                                    Attribute.AIR_CLEANING_MODE: self.air_cleaning_mode,
+                                    Attribute.AIR_CLEANING_EVENT: self.air_cleaning_event,
                                 },
                             )
                         )
@@ -628,12 +638,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 7,
                                 sequence=self._get_sequence(),
                                 data={
-                                    "dehumidification_status": 2,
-                                    "humidification_status": 2,
-                                    "ventilation_status": 2
+                                    Attribute.DEHUMIDIFICATION_STATUS: 2,
+                                    Attribute.HUMIDIFICATION_STATUS: 2,
+                                    Attribute.VENTILATION_STATUS: 2
                                     if self.fresh_air_mode
                                     else 0,
-                                    "air_cleaning_status": 2
+                                    Attribute.AIR_CLEANING_STATUS: 2
                                     if self.air_cleaning_mode
                                     else 0,
                                 },
@@ -642,8 +652,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
                 elif packet.functional_domain == FunctionalDomain.SCHEDULING:
                     if packet.attribute == 4:
-                        if "hold" in packet.data:
-                            self.hold = packet.data["hold"]
+                        if Attribute.HOLD in packet.data:
+                            self.hold = packet.data[Attribute.HOLD]
 
                         self.packet_queue.put_nowait(
                             Packet(
@@ -651,7 +661,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 FunctionalDomain.SCHEDULING,
                                 4,
                                 sequence=self._get_sequence(),
-                                data={"hold": self.hold},
+                                data={Attribute.HOLD: self.hold},
                             )
                         )
                 elif packet.functional_domain == FunctionalDomain.STATUS:
