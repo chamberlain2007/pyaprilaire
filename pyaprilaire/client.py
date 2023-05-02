@@ -254,6 +254,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
+        await self.read_dehumidification_setpoint()
+
     async def set_humidification_setpoint(self, humidification_setpoint: int):
         await self._send_packet(
             Packet(
@@ -263,6 +265,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 data={"humidification_setpoint": humidification_setpoint},
             )
         )
+
+        await self.read_humidification_setpoint()
 
     async def set_fresh_air(self, mode: int, event: int):
         await self._send_packet(
