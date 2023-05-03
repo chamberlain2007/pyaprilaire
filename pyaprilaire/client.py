@@ -216,8 +216,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
-    async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
+    async def update_setpoint(self, cool_setpoint: float, heat_setpoint: float):
         """Send a request to update the setpoint"""
+
+        cool_setpoint = round(cool_setpoint * 2) / 2
+        heat_setpoint = round(heat_setpoint * 2) / 2
+
         await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -479,7 +483,7 @@ class AprilaireClient(SocketClient):
         """Send a request to update the fan mode"""
         await self.protocol.update_fan_mode(fan_mode)
 
-    async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
+    async def update_setpoint(self, cool_setpoint: float, heat_setpoint: float):
         """Send a request to update the setpoint"""
         await self.protocol.update_setpoint(cool_setpoint, heat_setpoint)
 
