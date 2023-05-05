@@ -36,7 +36,7 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
         with patch("asyncio.sleep", new=sleep_mock):
             await self.protocol._update_status()
 
-        self.assertEqual(self.protocol.packet_queue.qsize(), 7)
+        self.assertEqual(self.protocol.packet_queue.qsize(), 9)
         self.assertEqual(sleep_mock.call_count, 1)
 
     async def test_queue_loop(self):
@@ -483,6 +483,64 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 4,
                 data={
                     "hold": 1,
+                },
+            )
+        )
+
+    async def test_set_dehumidification_setpoint(self):
+        await self.client.set_dehumidification_setpoint(50)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                3,
+                data={
+                    "dehumidification_setpoint": 50,
+                },
+            )
+        )
+
+    async def test_set_humidification_setpoint(self):
+        await self.client.set_humidification_setpoint(50)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                4,
+                data={
+                    "humidification_setpoint": 50,
+                },
+            )
+        )
+
+    async def test_set_fresh_air(self):
+        await self.client.set_fresh_air(1, 3)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                5,
+                data={
+                    "fresh_air_mode": 1,
+                    "fresh_air_event": 3,
+                },
+            )
+        )
+
+    async def test_set_air_cleaning(self):
+        await self.client.set_air_cleaning(1, 3)
+
+        self.assertPacketQueueContains(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                6,
+                data={
+                    "air_cleaning_mode": 1,
+                    "air_cleaning_event": 3,
                 },
             )
         )

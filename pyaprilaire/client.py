@@ -91,6 +91,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         await self.read_sensors()
         await self.read_thermostat_name()
         await self.configure_cos()
+        await self.read_dehumidification_setpoint()
+        await self.read_humidification_setpoint()
         await self.sync()
 
     def connection_made(self, transport: asyncio.Transport):
@@ -214,8 +216,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
-    async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
+    async def update_setpoint(self, cool_setpoint: float, heat_setpoint: float):
         """Send a request to update the setpoint"""
+
+        cool_setpoint = round(cool_setpoint * 2) / 2
+        heat_setpoint = round(heat_setpoint * 2) / 2
+
         await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -239,6 +245,50 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 FunctionalDomain.SCHEDULING,
                 4,
                 data={"hold": hold},
+            )
+        )
+
+    async def set_dehumidification_setpoint(self, dehumidification_setpoint: int):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                3,
+                data={"dehumidification_setpoint": dehumidification_setpoint},
+            )
+        )
+
+        await self.read_dehumidification_setpoint()
+
+    async def set_humidification_setpoint(self, humidification_setpoint: int):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                4,
+                data={"humidification_setpoint": humidification_setpoint},
+            )
+        )
+
+        await self.read_humidification_setpoint()
+
+    async def set_fresh_air(self, mode: int, event: int):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                5,
+                data={"fresh_air_mode": mode, "fresh_air_event": event},
+            )
+        )
+
+    async def set_air_cleaning(self, mode: int, event: int):
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.CONTROL,
+                6,
+                data={"air_cleaning_mode": mode, "air_cleaning_event": event},
             )
         )
 
@@ -267,13 +317,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                     0,  # Humidity Control Installer Settings
                     0,  # Fresh Air Installer Settings
                     1,  # Thermostat Setpoint & Mode Settings
-                    0,  # Dehumidification Setpoint
-                    0,  # Humidification Setpoint
-                    0,  # Fresh Air Setting
-                    0,  # Air Cleaning Settings
+                    1,  # Dehumidification Setpoint
+                    1,  # Humidification Setpoint
+                    1,  # Fresh Air Settings
+                    1,  # Air Cleaning Settings
                     1,  # Thermostat IAQ Available
                     0,  # Schedule Settings
-                    0,  # Away Settings
+                    1,  # Away Settings
                     0,  # Schedule Day
                     1,  # Schedule Hold
                     0,  # Heat Blast
@@ -310,6 +360,18 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Send a reques for the thermostat name"""
         await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5)
+        )
+
+    async def read_dehumidification_setpoint(self):
+        """Send a request for the dehumidification setpoint"""
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 3)
+        )
+
+    async def read_humidification_setpoint(self):
+        """Send a request for the humidification setpoint"""
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 4)
         )
 
 
@@ -421,7 +483,7 @@ class AprilaireClient(SocketClient):
         """Send a request to update the fan mode"""
         await self.protocol.update_fan_mode(fan_mode)
 
-    async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
+    async def update_setpoint(self, cool_setpoint: float, heat_setpoint: float):
         """Send a request to update the setpoint"""
         await self.protocol.update_setpoint(cool_setpoint, heat_setpoint)
 
@@ -444,3 +506,15 @@ class AprilaireClient(SocketClient):
     async def read_thermostat_name(self):
         """Send a request to read the thermostat name"""
         await self.protocol.read_thermostat_name()
+
+    async def set_dehumidification_setpoint(self, dehumidification_setpoint: int):
+        await self.protocol.set_dehumidification_setpoint(dehumidification_setpoint)
+
+    async def set_humidification_setpoint(self, humidification_setpoint: int):
+        await self.protocol.set_humidification_setpoint(humidification_setpoint)
+
+    async def set_fresh_air(self, mode: int, event: int):
+        await self.protocol.set_fresh_air(mode, event)
+
+    async def set_air_cleaning(self, mode: int, event: int):
+        await self.protocol.set_air_cleaning(mode, event)
