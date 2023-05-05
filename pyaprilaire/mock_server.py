@@ -539,35 +539,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                             "dehumidification_setpoint"
                         ]
                         self.dehumidification_status = 2
-
-                        self.packet_queue.put_nowait(
-                            Packet(
-                                Action.COS,
-                                FunctionalDomain.CONTROL,
-                                3,
-                                sequence=self._get_sequence(),
-                                data={
-                                    "dehumidification_setpoint": self.dehumidification_setpoint
-                                },
-                            )
-                        )
                     elif packet.attribute == 4:
                         self.humidification_setpoint = packet.data[
                             "humidification_setpoint"
                         ]
                         self.humidification_status = 2
-
-                        self.packet_queue.put_nowait(
-                            Packet(
-                                Action.COS,
-                                FunctionalDomain.CONTROL,
-                                4,
-                                sequence=self._get_sequence(),
-                                data={
-                                    "humidification_setpoint": self.humidification_setpoint
-                                },
-                            )
-                        )
                     elif packet.attribute == 5:
                         self.fresh_air_mode = packet.data["fresh_air_mode"]
                         self.fresh_air_event = packet.data["fresh_air_event"]

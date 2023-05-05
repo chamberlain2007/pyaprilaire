@@ -216,8 +216,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
-    async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
+    async def update_setpoint(self, cool_setpoint: float, heat_setpoint: float):
         """Send a request to update the setpoint"""
+
+        cool_setpoint = round(cool_setpoint * 2) / 2
+        heat_setpoint = round(heat_setpoint * 2) / 2
+
         await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -254,6 +258,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
+        await self.read_dehumidification_setpoint()
+
     async def set_humidification_setpoint(self, humidification_setpoint: int):
         await self._send_packet(
             Packet(
@@ -263,6 +269,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 data={"humidification_setpoint": humidification_setpoint},
             )
         )
+
+        await self.read_humidification_setpoint()
 
     async def set_fresh_air(self, mode: int, event: int):
         await self._send_packet(
@@ -309,13 +317,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                     0,  # Humidity Control Installer Settings
                     0,  # Fresh Air Installer Settings
                     1,  # Thermostat Setpoint & Mode Settings
-                    0,  # Dehumidification Setpoint
-                    0,  # Humidification Setpoint
-                    0,  # Fresh Air Setting
-                    0,  # Air Cleaning Settings
+                    1,  # Dehumidification Setpoint
+                    1,  # Humidification Setpoint
+                    1,  # Fresh Air Settings
+                    1,  # Air Cleaning Settings
                     1,  # Thermostat IAQ Available
                     0,  # Schedule Settings
-                    0,  # Away Settings
+                    1,  # Away Settings
                     0,  # Schedule Day
                     1,  # Schedule Hold
                     0,  # Heat Blast
@@ -475,7 +483,7 @@ class AprilaireClient(SocketClient):
         """Send a request to update the fan mode"""
         await self.protocol.update_fan_mode(fan_mode)
 
-    async def update_setpoint(self, cool_setpoint: int, heat_setpoint: int):
+    async def update_setpoint(self, cool_setpoint: float, heat_setpoint: float):
         """Send a request to update the setpoint"""
         await self.protocol.update_setpoint(cool_setpoint, heat_setpoint)
 
