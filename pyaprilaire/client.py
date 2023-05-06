@@ -8,7 +8,7 @@ from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
-from .const import Action, FunctionalDomain, QUEUE_FREQUENCY
+from .const import Action, Attribute, FunctionalDomain, QUEUE_FREQUENCY
 from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 
@@ -125,8 +125,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 )
                 continue
 
-            if "error" in packet.data:
-                error = packet.data["error"]
+            if Attribute.ERROR in packet.data:
+                error = packet.data[Attribute.ERROR]
 
                 if error != 0:
                     self.logger.error("Thermostat error: %d", error)
@@ -135,7 +135,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 packet.action == Action.COS
                 and packet.functional_domain == FunctionalDomain.CONTROL
                 and packet.attribute == 1
-                and packet.data.get("mode") == 1
+                and packet.data.get(Attribute.MODE) == 1
             ):
                 self.logger.info("Re-reading control because of COS with mode==1")
 
@@ -157,7 +157,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         if self.data_received_callback:
             asyncio.ensure_future(
                 self.data_received_callback(
-                    FunctionalDomain.NONE, 0, {"available": False}
+                    FunctionalDomain.NONE, 0, {Attribute.AVAILABLE: False}
                 )
             )
 
@@ -192,10 +192,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": mode,
-                    "fan_mode": 0,
-                    "heat_setpoint": 0,
-                    "cool_setpoint": 0,
+                    Attribute.MODE: mode,
+                    Attribute.FAN_MODE: 0,
+                    Attribute.HEAT_SETPOINT: 0,
+                    Attribute.COOL_SETPOINT: 0,
                 },
             )
         )
@@ -208,10 +208,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 0,
-                    "fan_mode": fan_mode,
-                    "heat_setpoint": 0,
-                    "cool_setpoint": 0,
+                    Attribute.MODE: 0,
+                    Attribute.FAN_MODE: fan_mode,
+                    Attribute.HEAT_SETPOINT: 0,
+                    Attribute.COOL_SETPOINT: 0,
                 },
             )
         )
@@ -228,10 +228,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 0,
-                    "fan_mode": 0,
-                    "heat_setpoint": heat_setpoint,
-                    "cool_setpoint": cool_setpoint,
+                    Attribute.MODE: 0,
+                    Attribute.FAN_MODE: 0,
+                    Attribute.HEAT_SETPOINT: heat_setpoint,
+                    Attribute.COOL_SETPOINT: cool_setpoint,
                 },
             )
         )
@@ -244,7 +244,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 Action.WRITE,
                 FunctionalDomain.SCHEDULING,
                 4,
-                data={"hold": hold},
+                data={Attribute.HOLD: hold},
             )
         )
 
@@ -254,7 +254,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 Action.WRITE,
                 FunctionalDomain.CONTROL,
                 3,
-                data={"dehumidification_setpoint": dehumidification_setpoint},
+                data={Attribute.DEHUMIDIFICATION_SETPOINT: dehumidification_setpoint},
             )
         )
 
@@ -266,7 +266,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 Action.WRITE,
                 FunctionalDomain.CONTROL,
                 4,
-                data={"humidification_setpoint": humidification_setpoint},
+                data={Attribute.HUMIDIFICATION_SETPOINT: humidification_setpoint},
             )
         )
 
@@ -278,7 +278,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 Action.WRITE,
                 FunctionalDomain.CONTROL,
                 5,
-                data={"fresh_air_mode": mode, "fresh_air_event": event},
+                data={Attribute.FRESH_AIR_MODE: mode, Attribute.FRESH_AIR_EVENT: event},
             )
         )
 
@@ -288,7 +288,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 Action.WRITE,
                 FunctionalDomain.CONTROL,
                 6,
-                data={"air_cleaning_mode": mode, "air_cleaning_event": event},
+                data={
+                    Attribute.AIR_CLEANING_MODE: mode,
+                    Attribute.AIR_CLEANING_EVENT: event,
+                },
             )
         )
 
@@ -299,7 +302,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 Action.WRITE,
                 FunctionalDomain.STATUS,
                 2,
-                data={"synced": 1},
+                data={Attribute.SYNCED: 1},
             )
         )
 
@@ -430,9 +433,9 @@ class AprilaireClient(SocketClient):
     def state_changed(self):
         """Send data indicating the state as changed"""
         data = {
-            "connected": self.connected,
-            "stopped": self.stopped,
-            "reconnecting": self.reconnecting,
+            Attribute.CONNECTED: self.connected,
+            Attribute.STOPPED: self.stopped,
+            Attribute.RECONNECTING: self.reconnecting,
         }
 
         self.data_received_callback(data)

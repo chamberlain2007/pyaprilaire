@@ -1,5 +1,5 @@
 from pyaprilaire.client import _AprilaireClientProtocol, AprilaireClient
-from pyaprilaire.const import Action, FunctionalDomain
+from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import Packet
 
 import asyncio
@@ -64,10 +64,10 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
         self.assertDictEqual(
             data,
             {
-                "mode": 1,
-                "fan_mode": 2,
-                "heat_setpoint": 10,
-                "cool_setpoint": 20,
+                Attribute.MODE: 1,
+                Attribute.FAN_MODE: 2,
+                Attribute.HEAT_SETPOINT: 10,
+                Attribute.COOL_SETPOINT: 20,
             },
         )
 
@@ -144,10 +144,10 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
             FunctionalDomain.CONTROL,
             1,
             data={
-                "mode": 1,
-                "fan_mode": 0,
-                "heat_setpoint": 0,
-                "cool_setpoint": 0,
+                Attribute.MODE: 1,
+                Attribute.FAN_MODE: 0,
+                Attribute.HEAT_SETPOINT: 0,
+                Attribute.COOL_SETPOINT: 0,
             },
         )
 
@@ -194,10 +194,10 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 1,
-                    "fan_mode": 0,
-                    "heat_setpoint": 0,
-                    "cool_setpoint": 0,
+                    Attribute.MODE: 1,
+                    Attribute.FAN_MODE: 0,
+                    Attribute.HEAT_SETPOINT: 0,
+                    Attribute.COOL_SETPOINT: 0,
                 },
             )
         )
@@ -211,10 +211,10 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 0,
-                    "fan_mode": 1,
-                    "heat_setpoint": 0,
-                    "cool_setpoint": 0,
+                    Attribute.MODE: 0,
+                    Attribute.FAN_MODE: 1,
+                    Attribute.HEAT_SETPOINT: 0,
+                    Attribute.COOL_SETPOINT: 0,
                 },
             )
         )
@@ -228,10 +228,10 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 0,
-                    "fan_mode": 0,
-                    "heat_setpoint": 20,
-                    "cool_setpoint": 10,
+                    Attribute.MODE: 0,
+                    Attribute.FAN_MODE: 0,
+                    Attribute.HEAT_SETPOINT: 20,
+                    Attribute.COOL_SETPOINT: 10,
                 },
             )
         )
@@ -245,7 +245,7 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.SCHEDULING,
                 4,
                 data={
-                    "hold": 1,
+                    Attribute.HOLD: 1,
                 },
             )
         )
@@ -259,7 +259,7 @@ class Test_Protocol(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.STATUS,
                 2,
                 data={
-                    "synced": 1,
+                    Attribute.SYNCED: 1,
                 },
             )
         )
@@ -393,7 +393,11 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.data_received_mock.call_count, 1)
         self.assertEqual(
             self.data_received_mock.call_args[0][0],
-            {"connected": True, "stopped": True, "reconnecting": True},
+            {
+                Attribute.CONNECTED: True,
+                Attribute.STOPPED: True,
+                Attribute.RECONNECTING: True,
+            },
         )
 
     def assertPacketQueueContains(self, packet: Packet):
@@ -431,10 +435,10 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 1,
-                    "fan_mode": 0,
-                    "heat_setpoint": 0,
-                    "cool_setpoint": 0,
+                    Attribute.MODE: 1,
+                    Attribute.FAN_MODE: 0,
+                    Attribute.HEAT_SETPOINT: 0,
+                    Attribute.COOL_SETPOINT: 0,
                 },
             )
         )
@@ -448,10 +452,10 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 0,
-                    "fan_mode": 1,
-                    "heat_setpoint": 0,
-                    "cool_setpoint": 0,
+                    Attribute.MODE: 0,
+                    Attribute.FAN_MODE: 1,
+                    Attribute.HEAT_SETPOINT: 0,
+                    Attribute.COOL_SETPOINT: 0,
                 },
             )
         )
@@ -465,10 +469,10 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 1,
                 data={
-                    "mode": 0,
-                    "fan_mode": 0,
-                    "heat_setpoint": 20,
-                    "cool_setpoint": 10,
+                    Attribute.MODE: 0,
+                    Attribute.FAN_MODE: 0,
+                    Attribute.HEAT_SETPOINT: 20,
+                    Attribute.COOL_SETPOINT: 10,
                 },
             )
         )
@@ -482,7 +486,7 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.SCHEDULING,
                 4,
                 data={
-                    "hold": 1,
+                    Attribute.HOLD: 1,
                 },
             )
         )
@@ -496,7 +500,7 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 3,
                 data={
-                    "dehumidification_setpoint": 50,
+                    Attribute.DEHUMIDIFICATION_SETPOINT: 50,
                 },
             )
         )
@@ -510,7 +514,7 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 4,
                 data={
-                    "humidification_setpoint": 50,
+                    Attribute.HUMIDIFICATION_SETPOINT: 50,
                 },
             )
         )
@@ -524,8 +528,8 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 5,
                 data={
-                    "fresh_air_mode": 1,
-                    "fresh_air_event": 3,
+                    Attribute.FRESH_AIR_MODE: 1,
+                    Attribute.FRESH_AIR_EVENT: 3,
                 },
             )
         )
@@ -539,8 +543,8 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.CONTROL,
                 6,
                 data={
-                    "air_cleaning_mode": 1,
-                    "air_cleaning_event": 3,
+                    Attribute.AIR_CLEANING_MODE: 1,
+                    Attribute.AIR_CLEANING_EVENT: 3,
                 },
             )
         )
@@ -554,7 +558,7 @@ class Test_Client(unittest.IsolatedAsyncioTestCase):
                 FunctionalDomain.STATUS,
                 2,
                 data={
-                    "synced": 1,
+                    Attribute.SYNCED: 1,
                 },
             )
         )
