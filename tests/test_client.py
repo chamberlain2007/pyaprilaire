@@ -1,14 +1,13 @@
-from pyaprilaire.client import _AprilaireClientProtocol, AprilaireClient
-from pyaprilaire.const import Action, Attribute, FunctionalDomain
-from pyaprilaire.packet import Packet
-
 import asyncio
 import logging
-import pytest
-
+import tracemalloc
 from unittest.mock import AsyncMock, Mock, patch
 
-import tracemalloc
+import pytest
+
+from pyaprilaire.client import AprilaireClient, _AprilaireClientProtocol
+from pyaprilaire.const import Action, Attribute, FunctionalDomain
+from pyaprilaire.packet import Packet
 
 tracemalloc.start()
 

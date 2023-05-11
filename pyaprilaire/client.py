@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-
 from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
-from .const import Action, Attribute, FunctionalDomain, QUEUE_FREQUENCY
+from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
 from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 

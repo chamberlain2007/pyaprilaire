@@ -1,12 +1,11 @@
-from pyaprilaire.client import SocketClient
-
 import asyncio
-from asyncio import Protocol
-
 import logging
+from asyncio import Protocol
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
 
-from unittest.mock import patch, AsyncMock, Mock
+from pyaprilaire.client import SocketClient
 
 
 @pytest.fixture
