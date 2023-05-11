@@ -43,3 +43,6 @@ filterwarnings = []
 omit = [
     "pyaprilaire/mock_server.py",
 ]
+
+[tool.isort]
+profile = "black" 
