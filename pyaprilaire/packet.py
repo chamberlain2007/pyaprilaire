@@ -249,6 +249,25 @@ MAPPING = {
     },
 }
 
+NACK_MAPPING = {
+    0x01: "Generic error",
+    0x03: "Buffer Full or Device Busy – try again",
+    0x04: "Unsupported protocol revision",
+    0x05: "Unknown Action",
+    0x06: "Unknown Functional Domain",
+    0x07: "Unknown Attribute",
+    0x08: "Thermostat cannot accept writes in current application mode",
+    0x09: "Timed out waiting for response",
+    0x0A: "Unsupported model",
+    0x10: "Value out of range",
+    0x11: "Attribute Read Only",
+    0x12: "Attribute not writeable in current configuration",
+    0x13: "Incorrect number or data bytes for the defined attribute in the payload",
+    0x20: "Attribute not readable (write only)",
+    0x21: "Attribute not available – try later",
+    0x22: "Incorrect number or data bytes for the defined attribute in the payload",
+}
+
 
 class Packet:
     def __init__(
@@ -518,3 +537,4 @@ class NackPacket(Packet):
         )
 
         self.nack_attribute = nack_attribute
+        self.error = NACK_MAPPING.get(nack_attribute)

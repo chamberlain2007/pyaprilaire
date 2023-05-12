@@ -120,7 +120,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
             if isinstance(packet, NackPacket):
                 self.logger.error(
-                    "Received NACK for attribute %d", packet.nack_attribute
+                    'Received NACK for attribute %d, message "%s"',
+                    packet.nack_attribute,
+                    packet.error,
                 )
                 continue
 
