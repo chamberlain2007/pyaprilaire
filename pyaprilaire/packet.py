@@ -36,224 +36,218 @@ class ValueType(Enum):
 
 
 MAPPING = {
-    Action.READ_RESPONSE: {
-        FunctionalDomain.SETUP: {
-            1: [
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-            ]
-        },
-        FunctionalDomain.CONTROL: {
-            1: [
-                (Attribute.MODE, ValueType.INTEGER_REQUIRED),
-                (Attribute.FAN_MODE, ValueType.INTEGER_REQUIRED),
-                (Attribute.HEAT_SETPOINT, ValueType.TEMPERATURE_REQUIRED),
-                (Attribute.COOL_SETPOINT, ValueType.TEMPERATURE_REQUIRED),
-            ],
-            3: [
-                (Attribute.DEHUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
-            ],
-            4: [
-                (Attribute.HUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
-            ],
-            5: [
-                (Attribute.FRESH_AIR_MODE, ValueType.INTEGER),
-                (Attribute.FRESH_AIR_EVENT, ValueType.INTEGER),
-            ],
-            6: [
-                (Attribute.AIR_CLEANING_MODE, ValueType.INTEGER),
-                (Attribute.AIR_CLEANING_EVENT, ValueType.INTEGER),
-            ],
-            7: [
-                (Attribute.THERMOSTAT_MODES, ValueType.INTEGER),
-                (Attribute.AIR_CLEANING_AVAILABLE, ValueType.INTEGER),
-                (Attribute.VENTILATION_AVAILABLE, ValueType.INTEGER),
-                (Attribute.DEHUMIDIFICATION_AVAILABLE, ValueType.INTEGER),
-                (Attribute.HUMIDIFICATION_AVAILABLE, ValueType.INTEGER),
-            ],
-        },
-        FunctionalDomain.SCHEDULING: {
-            4: [
-                (Attribute.HOLD, ValueType.INTEGER),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-            ],
-        },
-        FunctionalDomain.SENSORS: {
-            1: [
-                (Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS, ValueType.INTEGER),
-                (Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE, ValueType.TEMPERATURE),
-                (
-                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE,
-                    ValueType.TEMPERATURE,
-                ),
-                (
-                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
-                    ValueType.TEMPERATURE,
-                ),
-                (Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS, ValueType.INTEGER),
-                (Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE, ValueType.HUMIDITY),
-                (Attribute.RAT_SENSOR_STATUS, ValueType.INTEGER),
-                (Attribute.RAT_SENSOR_VALUE, ValueType.TEMPERATURE),
-                (Attribute.LAT_SENSOR_STATUS, ValueType.INTEGER),
-                (Attribute.LAT_SENSOR_VALUE, ValueType.TEMPERATURE),
-                (
-                    Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
-                    ValueType.TEMPERATURE,
-                ),
-                (
-                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE,
-                    ValueType.HUMIDITY,
-                ),
-            ],
-            2: [
-                (
-                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE,
-                    ValueType.TEMPERATURE,
-                ),
-                (
-                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE,
-                    ValueType.TEMPERATURE,
-                ),
-                (
-                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE,
-                    ValueType.HUMIDITY,
-                ),
-                (
-                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE,
-                    ValueType.HUMIDITY,
-                ),
-            ],
-        },
-        FunctionalDomain.STATUS: {
-            2: [
-                (Attribute.SYNCED, ValueType.INTEGER),
-            ],
-            6: [
-                (Attribute.HEATING_EQUIPMENT_STATUS, ValueType.INTEGER),
-                (Attribute.COOLING_EQUIPMENT_STATUS, ValueType.INTEGER),
-                (Attribute.PROGRESSIVE_RECOVERY, ValueType.INTEGER),
-                (Attribute.FAN_STATUS, ValueType.INTEGER),
-            ],
-            7: [
-                (Attribute.DEHUMIDIFICATION_STATUS, ValueType.INTEGER),
-                (Attribute.HUMIDIFICATION_STATUS, ValueType.INTEGER),
-                (Attribute.VENTILATION_STATUS, ValueType.INTEGER),
-                (Attribute.AIR_CLEANING_STATUS, ValueType.INTEGER),
-            ],
-            8: [
-                (Attribute.ERROR, ValueType.INTEGER),
-            ],
-        },
-        FunctionalDomain.IDENTIFICATION: {
-            1: [
-                (Attribute.HARDWARE_REVISION, ValueType.INTEGER),
-                (Attribute.FIRMWARE_MAJOR_REVISION, ValueType.INTEGER),
-                (Attribute.FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
-                (Attribute.PROTOCOL_MAJOR_REVISION, ValueType.INTEGER),
-                (Attribute.MODEL_NUMBER, ValueType.INTEGER),
-                (Attribute.GAINSPAN_FIRMWARE_MAJOR_REVISION, ValueType.INTEGER),
-                (Attribute.GAINSPAN_FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
-            ],
-            2: [
-                (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),
-            ],
-            4: [
-                (Attribute.LOCATION, ValueType.TEXT, 7),
-                (Attribute.NAME, ValueType.TEXT, 15),
-            ],
-            5: [
-                (Attribute.LOCATION, ValueType.TEXT, 7),
-                (Attribute.NAME, ValueType.TEXT, 15),
-            ],
-        },
-    }
+    FunctionalDomain.SETUP: {
+        1: [
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+        ]
+    },
+    FunctionalDomain.CONTROL: {
+        1: [
+            (Attribute.MODE, ValueType.INTEGER_REQUIRED),
+            (Attribute.FAN_MODE, ValueType.INTEGER_REQUIRED),
+            (Attribute.HEAT_SETPOINT, ValueType.TEMPERATURE_REQUIRED),
+            (Attribute.COOL_SETPOINT, ValueType.TEMPERATURE_REQUIRED),
+        ],
+        3: [
+            (Attribute.DEHUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
+        ],
+        4: [
+            (Attribute.HUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
+        ],
+        5: [
+            (Attribute.FRESH_AIR_MODE, ValueType.INTEGER),
+            (Attribute.FRESH_AIR_EVENT, ValueType.INTEGER),
+        ],
+        6: [
+            (Attribute.AIR_CLEANING_MODE, ValueType.INTEGER),
+            (Attribute.AIR_CLEANING_EVENT, ValueType.INTEGER),
+        ],
+        7: [
+            (Attribute.THERMOSTAT_MODES, ValueType.INTEGER),
+            (Attribute.AIR_CLEANING_AVAILABLE, ValueType.INTEGER),
+            (Attribute.VENTILATION_AVAILABLE, ValueType.INTEGER),
+            (Attribute.DEHUMIDIFICATION_AVAILABLE, ValueType.INTEGER),
+            (Attribute.HUMIDIFICATION_AVAILABLE, ValueType.INTEGER),
+        ],
+    },
+    FunctionalDomain.SCHEDULING: {
+        4: [
+            (Attribute.HOLD, ValueType.INTEGER),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+            (None, None),
+        ],
+    },
+    FunctionalDomain.SENSORS: {
+        1: [
+            (Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS, ValueType.INTEGER),
+            (Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE, ValueType.TEMPERATURE),
+            (
+                Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE,
+                ValueType.TEMPERATURE,
+            ),
+            (
+                Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
+                ValueType.TEMPERATURE,
+            ),
+            (Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS, ValueType.INTEGER),
+            (Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE, ValueType.HUMIDITY),
+            (Attribute.RAT_SENSOR_STATUS, ValueType.INTEGER),
+            (Attribute.RAT_SENSOR_VALUE, ValueType.TEMPERATURE),
+            (Attribute.LAT_SENSOR_STATUS, ValueType.INTEGER),
+            (Attribute.LAT_SENSOR_VALUE, ValueType.TEMPERATURE),
+            (
+                Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
+                ValueType.TEMPERATURE,
+            ),
+            (
+                Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE,
+                ValueType.HUMIDITY,
+            ),
+        ],
+        2: [
+            (
+                Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE,
+                ValueType.TEMPERATURE,
+            ),
+            (
+                Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE,
+                ValueType.TEMPERATURE,
+            ),
+            (
+                Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE,
+                ValueType.HUMIDITY,
+            ),
+            (
+                Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS,
+                ValueType.INTEGER,
+            ),
+            (
+                Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE,
+                ValueType.HUMIDITY,
+            ),
+        ],
+    },
+    FunctionalDomain.STATUS: {
+        2: [
+            (Attribute.SYNCED, ValueType.INTEGER),
+        ],
+        6: [
+            (Attribute.HEATING_EQUIPMENT_STATUS, ValueType.INTEGER),
+            (Attribute.COOLING_EQUIPMENT_STATUS, ValueType.INTEGER),
+            (Attribute.PROGRESSIVE_RECOVERY, ValueType.INTEGER),
+            (Attribute.FAN_STATUS, ValueType.INTEGER),
+        ],
+        7: [
+            (Attribute.DEHUMIDIFICATION_STATUS, ValueType.INTEGER),
+            (Attribute.HUMIDIFICATION_STATUS, ValueType.INTEGER),
+            (Attribute.VENTILATION_STATUS, ValueType.INTEGER),
+            (Attribute.AIR_CLEANING_STATUS, ValueType.INTEGER),
+        ],
+        8: [
+            (Attribute.ERROR, ValueType.INTEGER),
+        ],
+    },
+    FunctionalDomain.IDENTIFICATION: {
+        1: [
+            (Attribute.HARDWARE_REVISION, ValueType.INTEGER),
+            (Attribute.FIRMWARE_MAJOR_REVISION, ValueType.INTEGER),
+            (Attribute.FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
+            (Attribute.PROTOCOL_MAJOR_REVISION, ValueType.INTEGER),
+            (Attribute.MODEL_NUMBER, ValueType.INTEGER),
+            (Attribute.GAINSPAN_FIRMWARE_MAJOR_REVISION, ValueType.INTEGER),
+            (Attribute.GAINSPAN_FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
+        ],
+        2: [
+            (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),
+        ],
+        4: [
+            (Attribute.LOCATION, ValueType.TEXT, 7),
+            (Attribute.NAME, ValueType.TEXT, 15),
+        ],
+        5: [
+            (Attribute.LOCATION, ValueType.TEXT, 7),
+            (Attribute.NAME, ValueType.TEXT, 15),
+        ],
+    },
 }
-
-MAPPING[Action.COS] = MAPPING[Action.READ_RESPONSE]
-MAPPING[Action.WRITE] = MAPPING[Action.READ_RESPONSE]
-MAPPING[Action.READ_REQUEST] = MAPPING[Action.READ_RESPONSE]
 
 
 class Packet:
@@ -306,9 +300,8 @@ class Packet:
                 continue
 
             if (
-                action not in MAPPING
-                or functional_domain not in MAPPING[action]
-                or attribute not in MAPPING[action][functional_domain]
+                functional_domain not in MAPPING
+                or attribute not in MAPPING[functional_domain]
             ):
                 data_index += count + 5
                 continue
@@ -324,13 +317,11 @@ class Packet:
             attribute_index = 0
 
             while data_index <= final_index:
-                if attribute_index >= len(
-                    MAPPING[action][functional_domain][attribute]
-                ):
+                if attribute_index >= len(MAPPING[functional_domain][attribute]):
                     data_index += 1
                     pass
                 else:
-                    attribute_info = MAPPING[action][functional_domain][attribute][
+                    attribute_info = MAPPING[functional_domain][attribute][
                         attribute_index
                     ]
 
@@ -466,9 +457,7 @@ class Packet:
                 or self.action == Action.READ_RESPONSE
                 or self.action == Action.COS
             ):
-                for attribute_info in MAPPING[self.action][self.functional_domain][
-                    self.attribute
-                ]:
+                for attribute_info in MAPPING[self.functional_domain][self.attribute]:
                     (attribute_name, value_type, extra_attribute_info) = (
                         attribute_info[0],
                         attribute_info[1],
