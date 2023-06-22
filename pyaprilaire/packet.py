@@ -8,7 +8,7 @@ from enum import Enum
 import math
 from typing import Any
 
-from pyaprilaire.const import Action, FunctionalDomain
+from .const import Action, FunctionalDomain, Attribute
 
 crc_calculator = Calculator(
     Configuration(
@@ -64,7 +64,7 @@ MAPPING = {
                 (None, None),
                 (None, None),
                 (None, None),
-                ("away_available", ValueType.INTEGER),
+                (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),
                 (None, None),
                 (None, None),
                 (None, None),
@@ -86,36 +86,36 @@ MAPPING = {
         },
         FunctionalDomain.CONTROL: {
             1: [
-                ("mode", ValueType.INTEGER_REQUIRED),
-                ("fan_mode", ValueType.INTEGER_REQUIRED),
-                ("heat_setpoint", ValueType.TEMPERATURE_REQUIRED),
-                ("cool_setpoint", ValueType.TEMPERATURE_REQUIRED),
+                (Attribute.MODE, ValueType.INTEGER_REQUIRED),
+                (Attribute.FAN_MODE, ValueType.INTEGER_REQUIRED),
+                (Attribute.HEAT_SETPOINT, ValueType.TEMPERATURE_REQUIRED),
+                (Attribute.COOL_SETPOINT, ValueType.TEMPERATURE_REQUIRED),
             ],
             3: [
-                ("dehumidification_setpoint", ValueType.HUMIDITY),
+                (Attribute.DEHUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
             ],
             4: [
-                ("humidification_setpoint", ValueType.HUMIDITY),
+                (Attribute.HUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
             ],
             5: [
-                ("fresh_air_mode", ValueType.INTEGER),
-                ("fresh_air_event", ValueType.INTEGER),
+                (Attribute.FRESH_AIR_MODE, ValueType.INTEGER),
+                (Attribute.FRESH_AIR_EVENT, ValueType.INTEGER),
             ],
             6: [
-                ("air_cleaning_mode", ValueType.INTEGER),
-                ("air_cleaning_event", ValueType.INTEGER),
+                (Attribute.AIR_CLEANING_MODE, ValueType.INTEGER),
+                (Attribute.AIR_CLEANING_EVENT, ValueType.INTEGER),
             ],
             7: [
-                ("thermostat_modes", ValueType.INTEGER),
-                ("air_cleaning_available", ValueType.INTEGER),
-                ("ventilation_available", ValueType.INTEGER),
-                ("dehumidification_available", ValueType.INTEGER),
-                ("humidification_available", ValueType.INTEGER),
+                (Attribute.THERMOSTAT_MODES, ValueType.INTEGER),
+                (Attribute.AIR_CLEANING_AVAILABLE, ValueType.INTEGER),
+                (Attribute.VENTILATION_AVAILABLE, ValueType.INTEGER),
+                (Attribute.DEHUMIDIFICATION_AVAILABLE, ValueType.INTEGER),
+                (Attribute.HUMIDIFICATION_AVAILABLE, ValueType.INTEGER),
             ],
         },
         FunctionalDomain.SCHEDULING: {
             4: [
-                ("hold", ValueType.INTEGER),
+                (Attribute.HOLD, ValueType.INTEGER),
                 (None, None),
                 (None, None),
                 (None, None),
@@ -129,122 +129,122 @@ MAPPING = {
         },
         FunctionalDomain.SENSORS: {
             1: [
-                ("built_in_temperature_sensor_status", ValueType.INTEGER),
-                ("built_in_temperature_sensor_value", ValueType.TEMPERATURE),
+                (Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS, ValueType.INTEGER),
+                (Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE, ValueType.TEMPERATURE),
                 (
-                    "wired_remote_temperature_sensor_status",
+                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "wired_remote_temperature_sensor_value",
+                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
                 (
-                    "wired_outdoor_temperature_sensor_status",
+                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "wired_outdoor_temperature_sensor_value",
+                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
-                ("built_in_humidity_sensor_status", ValueType.INTEGER),
-                ("built_in_humidity_sensor_value", ValueType.HUMIDITY),
-                ("rat_sensor_status", ValueType.INTEGER),
-                ("rat_sensor_value", ValueType.TEMPERATURE),
-                ("lat_sensor_status", ValueType.INTEGER),
-                ("lat_sensor_value", ValueType.TEMPERATURE),
+                (Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS, ValueType.INTEGER),
+                (Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE, ValueType.HUMIDITY),
+                (Attribute.RAT_SENSOR_STATUS, ValueType.INTEGER),
+                (Attribute.RAT_SENSOR_VALUE, ValueType.TEMPERATURE),
+                (Attribute.LAT_SENSOR_STATUS, ValueType.INTEGER),
+                (Attribute.LAT_SENSOR_VALUE, ValueType.TEMPERATURE),
                 (
-                    "wireless_outdoor_temperature_sensor_status",
+                    Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "wireless_outdoor_temperature_sensor_value",
+                    Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
                 (
-                    "wireless_outdoor_humidity_sensor_status",
+                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "wireless_outdoor_humidity_sensor_value",
+                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE,
                     ValueType.HUMIDITY,
                 ),
             ],
             2: [
                 (
-                    "indoor_temperature_controlling_sensor_status",
+                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "indoor_temperature_controlling_sensor_value",
+                    Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
                 (
-                    "outdoor_temperature_controlling_sensor_status",
+                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "outdoor_temperature_controlling_sensor_value",
+                    Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
                 (
-                    "indoor_humidity_controlling_sensor_status",
+                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "indoor_humidity_controlling_sensor_value",
+                    Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE,
                     ValueType.HUMIDITY,
                 ),
                 (
-                    "outdoor_humidity_controlling_sensor_status",
+                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS,
                     ValueType.INTEGER,
                 ),
                 (
-                    "outdoor_humidity_controlling_sensor_value",
+                    Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE,
                     ValueType.HUMIDITY,
                 ),
             ],
         },
         FunctionalDomain.STATUS: {
             2: [
-                ("synced", ValueType.INTEGER),
+                (Attribute.SYNCED, ValueType.INTEGER),
             ],
             6: [
-                ("heating_equipment_status", ValueType.INTEGER),
-                ("cooling_equipment_status", ValueType.INTEGER),
-                ("progressive_recovery", ValueType.INTEGER),
-                ("fan_status", ValueType.INTEGER),
+                (Attribute.HEATING_EQUIPMENT_STATUS, ValueType.INTEGER),
+                (Attribute.COOLING_EQUIPMENT_STATUS, ValueType.INTEGER),
+                (Attribute.PROGRESSIVE_RECOVERY, ValueType.INTEGER),
+                (Attribute.FAN_STATUS, ValueType.INTEGER),
             ],
             7: [
-                ("dehumidification_status", ValueType.INTEGER),
-                ("humidification_status", ValueType.INTEGER),
-                ("ventilation_status", ValueType.INTEGER),
-                ("air_cleaning_status", ValueType.INTEGER),
+                (Attribute.DEHUMIDIFICATION_STATUS, ValueType.INTEGER),
+                (Attribute.HUMIDIFICATION_STATUS, ValueType.INTEGER),
+                (Attribute.VENTILATION_STATUS, ValueType.INTEGER),
+                (Attribute.AIR_CLEANING_STATUS, ValueType.INTEGER),
             ],
             8: [
-                ("error", ValueType.INTEGER),
+                (Attribute.ERROR, ValueType.INTEGER),
             ],
         },
         FunctionalDomain.IDENTIFICATION: {
             1: [
-                ("hardware_revision", ValueType.INTEGER),
-                ("firmware_major_revision", ValueType.INTEGER),
-                ("firmware_minor_revision", ValueType.INTEGER),
-                ("protocol_major_revision", ValueType.INTEGER),
-                ("model_number", ValueType.INTEGER),
-                ("gainspan_firmware_major_revision", ValueType.INTEGER),
-                ("gainspan_firmware_minor_revision", ValueType.INTEGER),
+                (Attribute.HARDWARE_REVISION, ValueType.INTEGER),
+                (Attribute.FIRMWARE_MAJOR_REVISION, ValueType.INTEGER),
+                (Attribute.FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
+                (Attribute.PROTOCOL_MAJOR_REVISION, ValueType.INTEGER),
+                (Attribute.MODEL_NUMBER, ValueType.INTEGER),
+                (Attribute.GAINSPAN_FIRMWARE_MAJOR_REVISION, ValueType.INTEGER),
+                (Attribute.GAINSPAN_FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
             ],
             2: [
-                ("mac_address", ValueType.MAC_ADDRESS),
+                (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),
             ],
             4: [
-                ("location", ValueType.TEXT, 7),
-                ("name", ValueType.TEXT, 15),
+                (Attribute.LOCATION, ValueType.TEXT, 7),
+                (Attribute.NAME, ValueType.TEXT, 15),
             ],
             5: [
-                ("location", ValueType.TEXT, 7),
-                ("name", ValueType.TEXT, 15),
+                (Attribute.LOCATION, ValueType.TEXT, 7),
+                (Attribute.NAME, ValueType.TEXT, 15),
             ],
         },
     }

@@ -1,4 +1,4 @@
-from pyaprilaire.const import Action, FunctionalDomain
+from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import NackPacket, Packet
 
 import unittest
@@ -151,10 +151,10 @@ class Test_Packet(unittest.TestCase):
         self.assertDictEqual(
             packet.data,
             {
-                "mode": 1,
-                "fan_mode": 2,
-                "heat_setpoint": 10,
-                "cool_setpoint": 20,
+                Attribute.MODE: 1,
+                Attribute.FAN_MODE: 2,
+                Attribute.HEAT_SETPOINT: 10,
+                Attribute.COOL_SETPOINT: 20,
             },
         )
 
@@ -168,7 +168,7 @@ class Test_Packet(unittest.TestCase):
         self.assertDictEqual(
             packet.data,
             {
-                "hold": 1,
+                Attribute.HOLD: 1,
             },
         )
 
@@ -182,14 +182,14 @@ class Test_Packet(unittest.TestCase):
         self.assertDictEqual(
             packet.data,
             {
-                "indoor_temperature_controlling_sensor_status": 1,
-                "indoor_temperature_controlling_sensor_value": 10,
-                "outdoor_temperature_controlling_sensor_status": 2,
-                "outdoor_temperature_controlling_sensor_value": 20,
-                "indoor_humidity_controlling_sensor_status": 3,
-                "indoor_humidity_controlling_sensor_value": 50,
-                "outdoor_humidity_controlling_sensor_status": 4,
-                "outdoor_humidity_controlling_sensor_value": 60,
+                Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 1,
+                Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 10,
+                Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 2,
+                Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 20,
+                Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 3,
+                Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
+                Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 4,
+                Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 60,
             },
         )
 
@@ -202,7 +202,7 @@ class Test_Packet(unittest.TestCase):
 
         self.assertDictEqual(
             packet.data,
-            {"mac_address": "1:2:3:4:5:6"},
+            {Attribute.MAC_ADDRESS: "1:2:3:4:5:6"},
         )
 
     def test_identification_4_parse(self):
@@ -249,7 +249,7 @@ class Test_Packet(unittest.TestCase):
 
         self.assertDictEqual(
             packet.data,
-            {"location": "12345", "name": "Test Name"},
+            {Attribute.LOCATION: "12345", Attribute.NAME: "Test Name"},
         )
 
     def test_decode_temperature(self):
@@ -376,10 +376,10 @@ class Test_Packet(unittest.TestCase):
             1,
             1,
             data={
-                "mode": 1,
-                "fan_mode": 2,
-                "heat_setpoint": 10,
-                "cool_setpoint": 20,
+                Attribute.MODE: 1,
+                Attribute.FAN_MODE: 2,
+                Attribute.HEAT_SETPOINT: 10,
+                Attribute.COOL_SETPOINT: 20,
             },
         ).serialize()
 
@@ -393,7 +393,7 @@ class Test_Packet(unittest.TestCase):
             1,
             1,
             data={
-                "hold": 1,
+                Attribute.HOLD: 1,
             },
         ).serialize()
 
@@ -409,14 +409,14 @@ class Test_Packet(unittest.TestCase):
             1,
             1,
             data={
-                "indoor_temperature_controlling_sensor_status": 1,
-                "indoor_temperature_controlling_sensor_value": 10,
-                "outdoor_temperature_controlling_sensor_status": 2,
-                "outdoor_temperature_controlling_sensor_value": 20,
-                "indoor_humidity_controlling_sensor_status": 3,
-                "indoor_humidity_controlling_sensor_value": 50,
-                "outdoor_humidity_controlling_sensor_status": 4,
-                "outdoor_humidity_controlling_sensor_value": 60,
+                Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 1,
+                Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 10,
+                Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 2,
+                Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 20,
+                Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 3,
+                Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
+                Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 4,
+                Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 60,
             },
         ).serialize()
 
@@ -431,7 +431,7 @@ class Test_Packet(unittest.TestCase):
             2,
             1,
             1,
-            data={"mac_address": [1, 2, 3, 4, 5, 6]},
+            data={Attribute.MAC_ADDRESS: [1, 2, 3, 4, 5, 6]},
         ).serialize()
 
         self.assertSequenceEqual(
@@ -445,7 +445,7 @@ class Test_Packet(unittest.TestCase):
             4,
             1,
             1,
-            data={"location": "12345", "name": "Test Name"},
+            data={Attribute.LOCATION: "12345", Attribute.NAME: "Test Name"},
         ).serialize()
 
         self.assertSequenceEqual(
