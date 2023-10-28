@@ -53,7 +53,6 @@ class SocketClient:
 
             if not self.reconnect_break_future:
                 self.reconnect_break_future = self._create_auto_reconnect_future()
-                print(self.reconnect_break_future)
 
             try:
                 await asyncio.wait_for(
