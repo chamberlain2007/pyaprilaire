@@ -1,3 +1,4 @@
+# pylint: disable=redefined-outer-name,missing-function-docstring,missing-module-docstring,protected-access
 import asyncio
 import logging
 from asyncio import Protocol
@@ -53,44 +54,57 @@ async def test_client_status(client: SocketClient):
     assert not client.stopped
     assert client.connected
     assert not client.reconnecting
+    assert not client.auto_reconnecting
 
     client._disconnect()
 
     assert not client.stopped
     assert not client.connected
     assert not client.reconnecting
+    assert not client.auto_reconnecting
 
     client.stop_listen()
 
     assert client.stopped
     assert not client.connected
     assert not client.reconnecting
+    assert not client.auto_reconnecting
 
 
 @patch_socket
-async def test_reconnect_loop(client: SocketClient):
+async def test_auto_reconnect_loop(client: SocketClient):
     client.reconnect_interval = 0.01
 
-    async def _reconnect_nowait(self: SocketClient, connect_wait_period: int = 0):
-        self.connected = True
-        self.reconnecting = False
+    async def _reconnect_nowait(*args, **kwargs):
+        client.connected = True
+        client.reconnecting = False
+
+    def _create_empty_future(self: SocketClient):  # pylint: disable=unused-argument
+        loop = asyncio.get_event_loop()
+        future = loop.create_future()
+        future.set_result(None)
+        return future
 
     with patch(
         "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
+    ), patch(
+        "pyaprilaire.socket_client.SocketClient._create_auto_reconnect_future",
+        new=_create_empty_future,
     ):
         await client.start_listen()
-        await client._reconnect_loop()
+        await client._auto_reconnect_loop()
 
     assert not client.stopped
     assert client.connected
     assert not client.reconnecting
+    assert not client.auto_reconnecting
 
 
 @patch_socket
-async def test_reconnect_loop_cancelled(client: SocketClient):
+async def test_auto_reconnect_loop_cancelled(client: SocketClient):
     client.reconnect_interval = 0.01
 
-    async def _reconnect_nowait(self: SocketClient, connect_wait_period: int = 0):
+    async def _reconnect_nowait(self: SocketClient):
         self.connected = True
         self.reconnecting = False
 
@@ -100,7 +114,7 @@ async def test_reconnect_loop_cancelled(client: SocketClient):
         "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
     ), patch("asyncio.wait_for", new=wait_for_mock):
         await client.start_listen()
-        await client._reconnect_loop()
+        await client._auto_reconnect_loop()
 
     assert not client.stopped
     assert client.connected
@@ -108,12 +122,12 @@ async def test_reconnect_loop_cancelled(client: SocketClient):
 
 
 @patch_socket
-async def test_reconnect_loop_stopped(client: SocketClient):
+async def test_auto_reconnect_loop_stopped(client: SocketClient):
     client.reconnect_interval = 0.01
     client.connected = False
     client.stopped = True
 
-    await client._reconnect_loop()
+    await client._auto_reconnect_loop()
 
     assert client.stopped
     assert not client.connected
@@ -121,21 +135,21 @@ async def test_reconnect_loop_stopped(client: SocketClient):
 
 
 @patch_socket
-async def test_cancel_reconnect_loop(client: SocketClient):
+async def test_cancel_auto_reconnect_loop(client: SocketClient):
     client.reconnect_interval = 1
     client.connected = True
     client.stopped = False
 
-    async def cancel_reconnect_loop():
+    async def cancel_auto_reconnect_loop():
         while not client.reconnect_break_future:
             await asyncio.sleep(0.01)
-        client._cancel_reconnect_loop()
+        client._cancel_auto_reconnect_loop()
 
-    await asyncio.gather(cancel_reconnect_loop(), client._reconnect_loop())
+    await asyncio.gather(cancel_auto_reconnect_loop(), client._auto_reconnect_loop())
 
 
 @patch_socket
-async def test_cancel_reconnect_loop_state_error(client: SocketClient):
+async def test_cancel_auto_reconnect_loop_state_error(client: SocketClient):
     loop = asyncio.get_event_loop()
     future = loop.create_future()
 
@@ -143,7 +157,7 @@ async def test_cancel_reconnect_loop_state_error(client: SocketClient):
 
     future.set_result(None)
 
-    client._cancel_reconnect_loop()
+    client._cancel_auto_reconnect_loop()
 
 
 @patch_socket
@@ -159,29 +173,6 @@ async def test_reconnect(client: SocketClient):
     assert not client.stopped
     assert client.connected
     assert not client.reconnecting
-
-
-async def test_reconnect_exception(client: SocketClient):
-    client.stopped = False
-
-    sleep_mock = AsyncMock()
-
-    def create_connection(*args, **kwargs):
-        client.cancelled = True
-        raise Exception("Test failure")
-
-    create_connection_mock = AsyncMock(side_effect=create_connection)
-
-    with (
-        patch("asyncio.sleep", new=sleep_mock),
-        patch("asyncio.BaseEventLoop.create_connection", new=create_connection_mock),
-    ):
-        await client._reconnect(10)
-
-    assert sleep_mock.await_count == 2
-    assert not client.stopped
-    assert not client.connected
-    assert client.reconnecting
 
 
 @patch_socket

@@ -32,12 +32,17 @@ class SocketClient:
         self.connected = False
         self.stopped = True
         self.reconnecting = False
+        self.auto_reconnecting = False
         self.cancelled = False
         self.reconnect_break_future: asyncio.Future = None
 
         self.protocol: asyncio.Protocol = None
 
-    async def _reconnect_loop(self):
+    def _create_auto_reconnect_future(self):
+        loop = asyncio.get_event_loop()
+        return loop.create_future()
+
+    async def _auto_reconnect_loop(self):
         """Wait for cancellable reconnect interval to pass, and perform reconnect"""
         if not self.reconnect_interval:
             return
@@ -47,8 +52,8 @@ class SocketClient:
                 break
 
             if not self.reconnect_break_future:
-                loop = asyncio.get_event_loop()
-                self.reconnect_break_future = loop.create_future()
+                self.reconnect_break_future = self._create_auto_reconnect_future()
+                print(self.reconnect_break_future)
 
             try:
                 await asyncio.wait_for(
@@ -58,9 +63,12 @@ class SocketClient:
             except asyncio.exceptions.CancelledError:
                 break
             except asyncio.exceptions.TimeoutError:
+                self.auto_reconnecting = True
+                self.state_changed()
+
                 await self._reconnect(10)
 
-    def _cancel_reconnect_loop(self):
+    def _cancel_auto_reconnect_loop(self):
         """Cancel the loop which does periodic reconnection"""
         if self.reconnect_break_future:
             try:
@@ -71,9 +79,11 @@ class SocketClient:
 
     def _disconnect(self):
         """Disconnect from the socket"""
-        self._cancel_reconnect_loop()
+        self._cancel_auto_reconnect_loop()
 
         self.connected = False
+        self.reconnecting = False
+        self.auto_reconnecting = False
 
         self.state_changed()
 
@@ -96,7 +106,9 @@ class SocketClient:
         if connect_wait_period is not None and connect_wait_period > 0:
             await asyncio.sleep(connect_wait_period)
 
-        self.protocol = self.create_protocol()
+        self.protocol = (
+            self.create_protocol()
+        )  # pylint: disable=assignment-from-no-return
 
         while True:
             if self.stopped or self.cancelled:
@@ -111,10 +123,11 @@ class SocketClient:
 
                 self.connected = True
                 self.reconnecting = False
+                self.auto_reconnecting = False
 
                 self.state_changed()
 
-                asyncio.ensure_future(self._reconnect_loop())
+                asyncio.ensure_future(self._auto_reconnect_loop())
 
                 break
 
@@ -137,6 +150,9 @@ class SocketClient:
         """Stop listening to the socket"""
 
         self.stopped = True
+        self.connected = False
+        self.reconnecting = False
+        self.auto_reconnecting = False
 
         self.state_changed()
 
@@ -144,8 +160,6 @@ class SocketClient:
 
     def create_protocol(self) -> asyncio.Protocol:
         """Create the socket protocol (implemented in derived class)"""
-        return None
 
     def state_changed(self):
         """Handle a state change (implemented in derived class)"""
-        pass
