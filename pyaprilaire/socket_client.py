@@ -32,12 +32,13 @@ class SocketClient:
         self.connected = False
         self.stopped = True
         self.reconnecting = False
+        self.auto_reconnecting = False
         self.cancelled = False
         self.reconnect_break_future: asyncio.Future = None
 
         self.protocol: asyncio.Protocol = None
 
-    async def _reconnect_loop(self):
+    async def _auto_reconnect_loop(self):
         """Wait for cancellable reconnect interval to pass, and perform reconnect"""
         if not self.reconnect_interval:
             return
@@ -58,9 +59,12 @@ class SocketClient:
             except asyncio.exceptions.CancelledError:
                 break
             except asyncio.exceptions.TimeoutError:
+                self.auto_reconnecting = True
+                self.state_changed()
+
                 await self._reconnect(10)
 
-    def _cancel_reconnect_loop(self):
+    def _cancel_auto_reconnect_loop(self):
         """Cancel the loop which does periodic reconnection"""
         if self.reconnect_break_future:
             try:
@@ -71,9 +75,11 @@ class SocketClient:
 
     def _disconnect(self):
         """Disconnect from the socket"""
-        self._cancel_reconnect_loop()
+        self._cancel_auto_reconnect_loop()
 
         self.connected = False
+        self.reconnecting = False
+        self.auto_reconnecting = False
 
         self.state_changed()
 
@@ -111,10 +117,11 @@ class SocketClient:
 
                 self.connected = True
                 self.reconnecting = False
+                self.auto_reconnecting = False
 
                 self.state_changed()
 
-                asyncio.ensure_future(self._reconnect_loop())
+                asyncio.ensure_future(self._auto_reconnect_loop())
 
                 break
 
@@ -137,6 +144,9 @@ class SocketClient:
         """Stop listening to the socket"""
 
         self.stopped = True
+        self.connected = False
+        self.reconnecting = False
+        self.auto_reconnecting = False
 
         self.state_changed()
 
@@ -144,8 +154,6 @@ class SocketClient:
 
     def create_protocol(self) -> asyncio.Protocol:
         """Create the socket protocol (implemented in derived class)"""
-        return None
 
     def state_changed(self):
         """Handle a state change (implemented in derived class)"""
-        pass
