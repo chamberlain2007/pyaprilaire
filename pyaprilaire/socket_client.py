@@ -38,10 +38,6 @@ class SocketClient:
 
         self.protocol: asyncio.Protocol = None
 
-    def _create_auto_reconnect_future(self):
-        loop = asyncio.get_event_loop()
-        return loop.create_future()
-
     async def _auto_reconnect_loop(self):
         """Wait for cancellable reconnect interval to pass, and perform reconnect"""
         if not self.reconnect_interval:
@@ -52,7 +48,8 @@ class SocketClient:
                 break
 
             if not self.reconnect_break_future:
-                self.reconnect_break_future = self._create_auto_reconnect_future()
+                loop = asyncio.get_event_loop()
+                self.reconnect_break_future = loop.create_future()
 
             try:
                 await asyncio.wait_for(
@@ -105,9 +102,7 @@ class SocketClient:
         if connect_wait_period is not None and connect_wait_period > 0:
             await asyncio.sleep(connect_wait_period)
 
-        self.protocol = (
-            self.create_protocol()
-        )  # pylint: disable=assignment-from-no-return
+        self.protocol = self.create_protocol()
 
         while True:
             if self.stopped or self.cancelled:

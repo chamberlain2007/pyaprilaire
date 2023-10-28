@@ -75,21 +75,18 @@ async def test_client_status(client: SocketClient):
 async def test_auto_reconnect_loop(client: SocketClient):
     client.reconnect_interval = 0.01
 
-    async def _reconnect_nowait(*args, **kwargs):
+    first_call = True
+
+    async def _reconnect_nowait(*args, **kwargs):  # pylint: disable=unused-arguments
+        if not first_call:
+            assert client.auto_reconnecting
+
         client.connected = True
         client.reconnecting = False
-
-    def _create_empty_future(self: SocketClient):  # pylint: disable=unused-argument
-        loop = asyncio.get_event_loop()
-        future = loop.create_future()
-        future.set_result(None)
-        return future
+        client.auto_reconnecting = False
 
     with patch(
         "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
-    ), patch(
-        "pyaprilaire.socket_client.SocketClient._create_auto_reconnect_future",
-        new=_create_empty_future,
     ):
         await client.start_listen()
         await client._auto_reconnect_loop()
@@ -173,6 +170,30 @@ async def test_reconnect(client: SocketClient):
     assert not client.stopped
     assert client.connected
     assert not client.reconnecting
+
+
+async def test_reconnect_exception(client: SocketClient):
+    client.stopped = False
+
+    sleep_mock = AsyncMock()
+
+    def create_connection(*args, **kwargs):  # pylint: disable=unused-arguments
+        client.cancelled = True
+        raise Exception("Test failure")  # pylint: disable=broad-exception-raised
+
+    create_connection_mock = AsyncMock(side_effect=create_connection)
+
+    with (
+        patch("asyncio.sleep", new=sleep_mock),
+        patch("asyncio.BaseEventLoop.create_connection", new=create_connection_mock),
+    ):
+        await client._reconnect(10)
+
+    assert sleep_mock.await_count == 2
+    assert not client.stopped
+    assert not client.connected
+    assert not client.reconnecting
+    assert not client.auto_reconnecting
 
 
 @patch_socket
