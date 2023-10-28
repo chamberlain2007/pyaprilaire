@@ -192,7 +192,7 @@ async def test_reconnect_exception(client: SocketClient):
     assert sleep_mock.await_count == 2
     assert not client.stopped
     assert not client.connected
-    assert not client.reconnecting
+    assert client.reconnecting
     assert not client.auto_reconnecting
 
 
