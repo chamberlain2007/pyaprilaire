@@ -78,8 +78,6 @@ class SocketClient:
         self._cancel_auto_reconnect_loop()
 
         self.connected = False
-        self.reconnecting = False
-        self.auto_reconnecting = False
 
         self.state_changed()
 
