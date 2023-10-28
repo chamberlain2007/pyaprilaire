@@ -17,10 +17,14 @@ click==8.1.3
     #   pip-tools
 colorama==0.4.6
     # via bumpver
-coverage==7.2.2
-    # via pyaprilaire (pyproject.toml)
+coverage[toml]==7.2.2
+    # via pytest-cov
 crc==4.1.0
     # via pyaprilaire (pyproject.toml)
+exceptiongroup==1.1.1
+    # via pytest
+iniconfig==2.0.0
+    # via pytest
 isort==5.12.0
     # via pyaprilaire (pyproject.toml)
 lexid==2021.1006
@@ -31,6 +35,7 @@ packaging==23.0
     # via
     #   black
     #   build
+    #   pytest
 pathlib2==2.3.7.post1
     # via bumpver
 pathspec==0.11.0
@@ -39,8 +44,18 @@ pip-tools==6.12.2
     # via pyaprilaire (pyproject.toml)
 platformdirs==3.0.0
     # via black
+pluggy==1.0.0
+    # via pytest
 pyproject-hooks==1.0.0
     # via build
+pytest==7.3.1
+    # via
+    #   pytest-asyncio
+    #   pytest-cov
+pytest-asyncio==0.21.0
+    # via pyaprilaire (pyproject.toml)
+pytest-cov==4.0.0
+    # via pyaprilaire (pyproject.toml)
 six==1.16.0
     # via pathlib2
 toml==0.10.2
@@ -49,6 +64,8 @@ tomli==2.0.1
     # via
     #   black
     #   build
+    #   coverage
+    #   pytest
 wheel==0.38.4
     # via pip-tools
 

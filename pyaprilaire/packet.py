@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from crc import Calculator, Configuration
-from enum import Enum
 import math
+from collections.abc import Iterator
+from enum import Enum
 from typing import Any
 
-from .const import Action, FunctionalDomain, Attribute
+from crc import Calculator, Configuration
+
+from .const import Action, Attribute, FunctionalDomain
 
 crc_calculator = Calculator(
     Configuration(

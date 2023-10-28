@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import logging
 
-from .const import Action, Attribute, FunctionalDomain, QUEUE_FREQUENCY
+from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
 from .packet import Packet
 
 COS_FREQUENCY = 30
