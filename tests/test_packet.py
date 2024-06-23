@@ -298,7 +298,7 @@ def test_decode_humidity_99():
 def test_decode_humidity_100():
     humidity = Packet._decode_humidity(100)
 
-    assert humidity == None
+    assert humidity == 100
 
 
 def test_decode_humidity_nonzero():
