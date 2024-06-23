@@ -445,7 +445,7 @@ class Packet:
     @classmethod
     def _decode_humidity(self, raw_value: int) -> int:
         """Decode a humidity value from the thermostat"""
-        if raw_value <= 0 or raw_value >= 100:
+        if raw_value < 0 or raw_value > 100:
             return None
         return raw_value
 
