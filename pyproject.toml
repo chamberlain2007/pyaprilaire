@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyaprilaire"
-version = "0.7.2"
+version = "0.7.3"
 readme = "README.md"
 dependencies = [
     "crc >= 4"
@@ -14,7 +14,7 @@ dependencies = [
 dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov"]
 
 [tool.bumpver]
-current_version = "0.7.2"
+current_version = "0.7.3"
 version_pattern = "MAJOR.MINOR.PATCH[PYTAGNUM]"
 commit_message  = "Bump version {old_version} -> {new_version}"
 commit          = true
