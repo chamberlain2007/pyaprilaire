@@ -280,7 +280,7 @@ def test_decode_temperature_negative_decimal():
 def test_decode_humidity_zero():
     humidity = Packet._decode_humidity(0)
 
-    assert humidity == None
+    assert humidity == 0
 
 
 def test_decode_humidity_1():
