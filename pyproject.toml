@@ -9,6 +9,9 @@ readme = "README.md"
 dependencies = [
     "crc >= 4"
 ]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 
 [project.optional-dependencies]
 dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov"]
