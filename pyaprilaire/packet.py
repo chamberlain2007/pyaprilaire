@@ -205,6 +205,16 @@ MAPPING = {
                     ValueType.HUMIDITY,
                 ),
             ],
+            4: [
+                (
+                    Attribute.OUTDOOR_SENSOR_STATUS,
+                    ValueType.INTEGER
+                ),
+                (
+                    Attribute.OUTDOOR_SENSOR,
+                    ValueType.TEMPERATURE
+                )
+            ]
         },
         FunctionalDomain.STATUS: {
             2: [
