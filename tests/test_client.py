@@ -686,6 +686,23 @@ async def test_client_read_thermostat_name(
         ),
     )
 
+async def test_client_set_written_outdoor_temperature_value(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.set_written_outdoor_temperature_value(10)
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.SENSORS,
+            4,
+            data={
+                Attribute.OUTDOOR_SENSOR_STATUS: 0,
+                Attribute.OUTDOOR_SENSOR: 10
+            }
+        )
+    )
 
 async def test_client_wait_for_response_success(client: AprilaireClient):
     wait_for_mock = AsyncMock(return_value=True)

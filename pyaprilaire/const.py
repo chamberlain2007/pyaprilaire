@@ -147,3 +147,5 @@ class Attribute(StrEnum):
     MAC_ADDRESS = "mac_address"
     LOCATION = "location"
     NAME = "name"
+    OUTDOOR_SENSOR_STATUS = "outdoor_sensor_status"
+    OUTDOOR_SENSOR = "outdoor_sensor"

@@ -376,6 +376,20 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 4)
         )
 
+    async def set_written_outdoor_temperature_value(self, value: int):
+        """Send a request to update the written outdoor temperature value"""
+        await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.SENSORS,
+                4,
+                data={
+                    Attribute.OUTDOOR_SENSOR_STATUS: 0,
+                    Attribute.OUTDOOR_SENSOR: value
+                }
+            )
+        )
+
 
 class AprilaireClient(SocketClient):
     """Client for sending/receiving data"""
@@ -520,3 +534,7 @@ class AprilaireClient(SocketClient):
 
     async def set_air_cleaning(self, mode: int, event: int):
         await self.protocol.set_air_cleaning(mode, event)
+
+    async def set_written_outdoor_temperature_value(self, value: int):
+        """Send a request to update the written outdoor temperature value"""
+        await self.protocol.set_written_outdoor_temperature_value(value)
