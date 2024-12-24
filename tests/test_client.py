@@ -308,19 +308,6 @@ async def test_protocol_read_mac_address(protocol: _AprilaireClientProtocol):
     )
 
 
-async def test_protocol_read_thermostat_status(protocol: _AprilaireClientProtocol):
-    await protocol.read_thermostat_status()
-
-    assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.READ_REQUEST,
-            FunctionalDomain.CONTROL,
-            7,
-        ),
-    )
-
-
 async def test_protocol_read_thermostat_name(protocol: _AprilaireClientProtocol):
     await protocol.read_thermostat_name()
 

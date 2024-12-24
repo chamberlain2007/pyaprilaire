@@ -352,12 +352,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 2)
         )
 
-    async def read_thermostat_status(self):
-        """Send a request for thermostat status"""
-        await self._send_packet(
-            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 7)
-        )
-
     async def read_thermostat_name(self):
         """Send a reques for the thermostat name"""
         await self._send_packet(
@@ -543,10 +537,6 @@ class AprilaireClient(SocketClient):
     async def read_mac_address(self):
         """Send a request to read the MAC address"""
         await self.protocol.read_mac_address()
-
-    async def read_thermostat_status(self):
-        """Send a request to read the thermostat status"""
-        await self.protocol.read_thermostat_status()
 
     async def read_thermostat_name(self):
         """Send a request to read the thermostat name"""
