@@ -308,19 +308,6 @@ async def test_protocol_read_mac_address(protocol: _AprilaireClientProtocol):
     )
 
 
-async def test_protocol_read_thermostat_status(protocol: _AprilaireClientProtocol):
-    await protocol.read_thermostat_status()
-
-    assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.READ_REQUEST,
-            FunctionalDomain.CONTROL,
-            7,
-        ),
-    )
-
-
 async def test_protocol_read_thermostat_name(protocol: _AprilaireClientProtocol):
     await protocol.read_thermostat_name()
 
@@ -701,6 +688,48 @@ async def test_client_set_written_outdoor_temperature_value(
                 Attribute.OUTDOOR_SENSOR_STATUS: 0,
                 Attribute.OUTDOOR_SENSOR: 10
             }
+        )
+    )
+
+async def test_client_read_thermostat_iaq_available(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_thermostat_iaq_available()
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.READ_REQUEST,
+            FunctionalDomain.CONTROL,
+            7
+        )
+    )
+
+async def test_client_read_thermostat_status(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_thermostat_status()
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.READ_REQUEST,
+            FunctionalDomain.STATUS,
+            6
+        )
+    )
+
+async def test_client_read_iaq_status(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_iaq_status()
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.READ_REQUEST,
+            FunctionalDomain.STATUS,
+            7
         )
     )
 

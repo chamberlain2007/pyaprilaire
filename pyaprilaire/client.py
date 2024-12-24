@@ -352,12 +352,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 2)
         )
 
-    async def read_thermostat_status(self):
-        """Send a request for thermostat status"""
-        await self._send_packet(
-            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 7)
-        )
-
     async def read_thermostat_name(self):
         """Send a reques for the thermostat name"""
         await self._send_packet(
@@ -389,7 +383,36 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 }
             )
         )
+    
+    async def read_thermostat_iaq_available(self):
+        """Send a request to read the thermostat/IAQ available data"""
+        await self._send_packet(
+            Packet(
+                Action.READ_REQUEST,
+                FunctionalDomain.CONTROL,
+                7
+            )
+        )
 
+    async def read_thermostat_status(self):
+        """Send a request to read the thermostat status"""
+        await self._send_packet(
+            Packet(
+                Action.READ_REQUEST,
+                FunctionalDomain.STATUS,
+                6
+            )
+        )
+
+    async def read_iaq_status(self):
+        """Send a request to read the IAQ status"""
+        await self._send_packet(
+            Packet(
+                Action.READ_REQUEST,
+                FunctionalDomain.STATUS,
+                7
+            )
+        )
 
 class AprilaireClient(SocketClient):
     """Client for sending/receiving data"""
@@ -515,10 +538,6 @@ class AprilaireClient(SocketClient):
         """Send a request to read the MAC address"""
         await self.protocol.read_mac_address()
 
-    async def read_thermostat_status(self):
-        """Send a request to read the thermostat status"""
-        await self.protocol.read_thermostat_status()
-
     async def read_thermostat_name(self):
         """Send a request to read the thermostat name"""
         await self.protocol.read_thermostat_name()
@@ -538,3 +557,15 @@ class AprilaireClient(SocketClient):
     async def set_written_outdoor_temperature_value(self, value: int):
         """Send a request to update the written outdoor temperature value"""
         await self.protocol.set_written_outdoor_temperature_value(value)
+    
+    async def read_thermostat_iaq_available(self):
+        """Send a request to read the thermostat/IAQ available data"""
+        await self.protocol.read_thermostat_iaq_available()
+    
+    async def read_thermostat_status(self):
+        """Send a request to read the thermostat status"""
+        await self.protocol.read_thermostat_status()
+    
+    async def read_iaq_status(self):
+        """Send a request to read the IAQ status"""
+        await self.protocol.read_iaq_status()
