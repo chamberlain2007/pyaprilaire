@@ -211,3 +211,11 @@ async def test_reconnect_reconnecting(client: SocketClient):
     assert not client.stopped
     assert client.connected
     assert client.reconnecting
+
+@patch_socket
+async def test_reconnect_once(client: SocketClient):
+    await client._reconnect_once()
+
+    assert client.connected
+    assert not client.reconnecting
+    assert not client.auto_reconnecting
