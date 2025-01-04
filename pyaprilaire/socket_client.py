@@ -25,7 +25,6 @@ class SocketClient:
         self.port = port
         self.data_received_callback = data_received_callback
         self.logger = logger
-        self.data: dict[str, Any] = {}
         self.reconnect_interval = reconnect_interval
         self.retry_connection_interval = retry_connection_interval
 
@@ -129,6 +128,33 @@ class SocketClient:
                 if not self.stopped:
                     await asyncio.sleep(self.retry_connection_interval)
 
+    async def _reconnect_once(self):
+        """Reconnect to the socket without reconnect loop"""
+
+        if self.reconnecting:
+            return
+
+        self.reconnecting = True
+
+        self.state_changed()
+
+        # Ensure already disconnected
+        self._disconnect()
+
+        self.protocol = self.create_protocol()
+
+        await asyncio.get_event_loop().create_connection(
+            lambda: self.protocol,
+            self.host,
+            self.port,
+        )
+
+        self.connected = True
+        self.reconnecting = False
+        self.auto_reconnecting = False
+
+        self.state_changed()
+
     async def start_listen(self):
         """Start listening to the socket"""
 
@@ -137,6 +163,15 @@ class SocketClient:
         self.state_changed()
 
         await self._reconnect()
+
+    async def start_listen_once(self):
+        """Start listening to the socket without reconnect loop"""
+
+        self.stopped = False
+
+        self.state_changed()
+
+        await self._reconnect_once()
 
     def stop_listen(self):
         """Stop listening to the socket"""
