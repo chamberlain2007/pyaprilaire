@@ -45,6 +45,7 @@ filterwarnings = []
 [tool.coverage.run]
 omit = [
     "pyaprilaire/mock_server.py",
+    "pyaprilaire/test_connection.py"
 ]
 
 [tool.isort]

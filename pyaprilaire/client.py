@@ -451,6 +451,7 @@ class AprilaireClient(SocketClient):
         self, functional_domain: FunctionalDomain, attribute: int, data: dict[str, Any]
     ):
         """Called when data is received from the thermostat"""
+
         self.data_received_callback(data)
 
         if not functional_domain or not attribute:
@@ -475,6 +476,17 @@ class AprilaireClient(SocketClient):
         }
 
         self.data_received_callback(data)
+
+    async def test_connection(self) -> str:
+        """Test connecting to a thermostat without entering a reconnect loop."""
+
+        await self.start_listen_once()
+
+        await self.read_mac_address()
+
+        await self.wait_for_response(FunctionalDomain.IDENTIFICATION, 2, 5)
+
+        self.stop_listen()
 
     async def wait_for_response(
         self, functional_domain: FunctionalDomain, attribute: int, timeout: int = None
