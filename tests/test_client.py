@@ -763,3 +763,12 @@ async def test_client_reconnect_with_delay(client: AprilaireClient):
 
         assert reconnect_mock.call_count == 1
         assert reconnect_mock.call_args[0][0] == client.retry_connection_interval
+
+async def test_test_connection(client: AprilaireClient):
+    reconnect_once_mock = AsyncMock()
+
+    with patch("pyaprilaire.socket_client.SocketClient._reconnect_once", new=reconnect_once_mock):
+        await client.test_connection()
+
+        assert reconnect_once_mock.call_count == 1
+
