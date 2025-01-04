@@ -130,10 +130,7 @@ class SocketClient:
 
     async def _reconnect_once(self):
         """Reconnect to the socket without reconnect loop"""
-
-        if self.reconnecting:
-            return
-
+        
         self.reconnecting = True
 
         self.state_changed()
