@@ -101,32 +101,23 @@ class SocketClient:
 
         self.protocol = self.create_protocol()
 
-        while True:
-            if self.stopped or self.cancelled:
-                break
+        try:
+            await asyncio.get_event_loop().create_connection(
+                lambda: self.protocol,
+                self.host,
+                self.port,
+            )
 
-            try:
-                await asyncio.get_event_loop().create_connection(
-                    lambda: self.protocol,
-                    self.host,
-                    self.port,
-                )
+            self.connected = True
+            self.reconnecting = False
+            self.auto_reconnecting = False
 
-                self.connected = True
-                self.reconnecting = False
-                self.auto_reconnecting = False
+            self.state_changed()
 
-                self.state_changed()
+            asyncio.ensure_future(self._auto_reconnect_loop())
 
-                asyncio.ensure_future(self._auto_reconnect_loop())
-
-                break
-
-            except Exception as exc:  # pylint: disable=broad-except
-                self.logger.error("Failed to connect to thermostat: %s", str(exc))
-
-                if not self.stopped:
-                    await asyncio.sleep(self.retry_connection_interval)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.logger.error("Failed to connect to thermostat: %s", str(exc))
 
     async def _reconnect_once(self):
         """Reconnect to the socket without reconnect loop"""
