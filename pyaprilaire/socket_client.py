@@ -119,6 +119,12 @@ class SocketClient:
         except Exception as exc:  # pylint: disable=broad-except
             self.logger.error("Failed to connect to thermostat: %s", str(exc))
 
+            self.reconnecting = False
+
+            self.state_changed()
+
+            asyncio.ensure_future(self._reconnect(10))
+
     async def _reconnect_once(self):
         """Reconnect to the socket without reconnect loop"""
         
