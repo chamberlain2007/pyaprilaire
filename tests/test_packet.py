@@ -179,6 +179,60 @@ def test_scheduling_4_parse():
     }
 
 
+def test_sensor_1_parse():
+    packets: list[Packet] = list(
+        Packet.parse(
+            [
+                1,
+                1,
+                0,
+                19,
+                3,
+                5,
+                1,
+                0,
+                21,
+                0,
+                20,
+                0,
+                10,
+                0,
+                45,
+                0,
+                22,
+                0,
+                82,
+                3,
+                0,
+                3,
+                0,
+                145,
+            ]
+        )
+    )
+
+    packet = packets[0]
+
+    assert packet.data == {
+        Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS: 0,
+        Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE: 21.0,
+        Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS: 0,
+        Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE: 20.0,
+        Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS: 0,
+        Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 10.0,
+        Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS: 0,
+        Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE: 45,
+        Attribute.RAT_SENSOR_STATUS: 0,
+        Attribute.RAT_SENSOR_VALUE: 22.0,
+        Attribute.LAT_SENSOR_STATUS: 0,
+        Attribute.LAT_SENSOR_VALUE: 18.5,
+        Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS: 3,
+        Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 0.0,
+        Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS: 3,
+        Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE: 0,
+    }
+
+
 def test_sensor_2_parse():
     packets: list[Packet] = list(
         Packet.parse([1, 1, 0, 11, 3, 5, 2, 1, 10, 2, 20, 3, 50, 4, 60, 12])
@@ -195,6 +249,19 @@ def test_sensor_2_parse():
         Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
         Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 4,
         Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 60,
+    }
+
+
+def test_sensor_4_parse():
+    packets: list[Packet] = list(
+        Packet.parse([1, 1, 0, 5, 3, 5, 4, 0, 85, 181])
+    )
+
+    packet = packets[0]
+
+    assert packet.data == {
+        Attribute.OUTDOOR_SENSOR_STATUS: 0,
+        Attribute.OUTDOOR_SENSOR: 21.5,
     }
 
 
@@ -408,6 +475,63 @@ def test_scheduling_4_serialize():
     assert serialized == bytes([1, 1, 0, 13, 3, 3, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 55])
 
 
+def test_sensor_1_serialize():
+    serialized = Packet(
+        Action.READ_RESPONSE,
+        FunctionalDomain.SENSORS,
+        1,
+        1,
+        1,
+        data={
+            Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS: 0,
+            Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE: 21.0,
+            Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS: 0,
+            Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE: 20.0,
+            Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS: 0,
+            Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 10.0,
+            Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS: 0,
+            Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE: 45,
+            Attribute.RAT_SENSOR_STATUS: 0,
+            Attribute.RAT_SENSOR_VALUE: 22.0,
+            Attribute.LAT_SENSOR_STATUS: 0,
+            Attribute.LAT_SENSOR_VALUE: 18.5,
+            Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS: 3,
+            Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 0.0,
+            Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS: 3,
+            Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE: 0,
+        },
+    ).serialize()
+
+    assert serialized == bytes(
+        [
+            1,
+            1,
+            0,
+            19,
+            3,
+            5,
+            1,
+            0,
+            21,
+            0,
+            20,
+            0,
+            10,
+            0,
+            45,
+            0,
+            22,
+            0,
+            82,
+            3,
+            0,
+            3,
+            0,
+            145,
+        ]
+    )
+
+
 def test_sensor_2_serialize():
     serialized = Packet(
         Action.READ_RESPONSE,
@@ -428,6 +552,22 @@ def test_sensor_2_serialize():
     ).serialize()
 
     assert serialized == bytes([1, 1, 0, 11, 3, 5, 2, 1, 10, 2, 20, 3, 50, 4, 60, 12])
+
+
+def test_sensor_4_serialize():
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.SENSORS,
+        4,
+        1,
+        1,
+        data={
+            Attribute.OUTDOOR_SENSOR_STATUS: 0,
+            Attribute.OUTDOOR_SENSOR: 21.5,
+        },
+    ).serialize()
+
+    assert serialized == bytes([1, 1, 0, 5, 1, 5, 4, 0, 85, 34])
 
 
 def test_identification_2_serialize():

@@ -71,6 +71,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.location = "02134"
         self.mac_address = [1, 2, 3, 4, 5, 6]
 
+        self.written_outdoor_temperature = 25.0
+        self.written_outdoor_temperature_status = 0
+        # Spec: written ODT times out if not refreshed within 10 minutes.
+        self._written_outdoor_timeout_seconds = 600
+        self._written_outdoor_timeout_handle: asyncio.TimerHandle | None = None
+
         self.packet_queue = asyncio.Queue()
 
         self.sequence = 0
@@ -80,6 +86,43 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.sequence = (self.sequence + 1) % 128
 
         return self.sequence
+
+    def _cancel_written_outdoor_timeout(self):
+        """Cancel any pending written outdoor temperature timeout"""
+        if self._written_outdoor_timeout_handle is not None:
+            self._written_outdoor_timeout_handle.cancel()
+            self._written_outdoor_timeout_handle = None
+
+    def _schedule_written_outdoor_timeout(self):
+        """Schedule COS status 4 if written outdoor temperature is not refreshed"""
+        self._cancel_written_outdoor_timeout()
+
+        loop = asyncio.get_event_loop()
+        self._written_outdoor_timeout_handle = loop.call_later(
+            self._written_outdoor_timeout_seconds,
+            self._fire_written_outdoor_timeout,
+        )
+
+    def _fire_written_outdoor_timeout(self):
+        """Emit Sensors attribute 4 COS with timed-out status"""
+        self._written_outdoor_timeout_handle = None
+        self.written_outdoor_temperature_status = 4
+
+        if not self.transport:
+            return
+
+        self.packet_queue.put_nowait(
+            Packet(
+                Action.COS,
+                FunctionalDomain.SENSORS,
+                4,
+                sequence=self._get_sequence(),
+                data={
+                    Attribute.OUTDOOR_SENSOR_STATUS: self.written_outdoor_temperature_status,
+                    Attribute.OUTDOOR_SENSOR: self.written_outdoor_temperature,
+                },
+            )
+        )
 
     async def _send_status(self):
         """Send the current status"""
@@ -409,7 +452,34 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                             )
                         )
                 elif packet.functional_domain == FunctionalDomain.SENSORS:
-                    if packet.attribute == 2:
+                    if packet.attribute == 1:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.SENSORS,
+                                1,
+                                sequence=self._get_sequence(),
+                                data={
+                                    Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS: 0,
+                                    Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE: 25,
+                                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS: 3,
+                                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE: 0,
+                                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS: 0,
+                                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 20,
+                                    Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS: 0,
+                                    Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE: 50,
+                                    Attribute.RAT_SENSOR_STATUS: 0,
+                                    Attribute.RAT_SENSOR_VALUE: 24,
+                                    Attribute.LAT_SENSOR_STATUS: 0,
+                                    Attribute.LAT_SENSOR_VALUE: 18,
+                                    Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS: 3,
+                                    Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 0,
+                                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS: 3,
+                                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE: 0,
+                                },
+                            )
+                        )
+                    elif packet.attribute == 2:
                         self.packet_queue.put_nowait(
                             Packet(
                                 Action.READ_RESPONSE,
@@ -425,6 +495,19 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                     Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
                                     Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
                                     Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 40,
+                                },
+                            )
+                        )
+                    elif packet.attribute == 4:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.SENSORS,
+                                4,
+                                sequence=self._get_sequence(),
+                                data={
+                                    Attribute.OUTDOOR_SENSOR_STATUS: self.written_outdoor_temperature_status,
+                                    Attribute.OUTDOOR_SENSOR: self.written_outdoor_temperature,
                                 },
                             )
                         )
@@ -646,6 +729,27 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                             )
                         )
 
+                elif packet.functional_domain == FunctionalDomain.SENSORS:
+                    if packet.attribute == 4:
+                        if Attribute.OUTDOOR_SENSOR in packet.data:
+                            self.written_outdoor_temperature = packet.data[
+                                Attribute.OUTDOOR_SENSOR
+                            ]
+                            self.written_outdoor_temperature_status = 0
+                            self._schedule_written_outdoor_timeout()
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.SENSORS,
+                                4,
+                                sequence=self._get_sequence(),
+                                data={
+                                    Attribute.OUTDOOR_SENSOR_STATUS: self.written_outdoor_temperature_status,
+                                    Attribute.OUTDOOR_SENSOR: self.written_outdoor_temperature,
+                                },
+                            )
+                        )
                 elif packet.functional_domain == FunctionalDomain.SCHEDULING:
                     if packet.attribute == 4:
                         if Attribute.HOLD in packet.data:
@@ -666,6 +770,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
+        self._cancel_written_outdoor_timeout()
         self.transport = None
 
 

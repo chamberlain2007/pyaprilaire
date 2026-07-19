@@ -88,6 +88,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         await self.read_thermostat_status()
         await self.read_control()
         await self.read_sensors()
+        await self.read_sensor_values()
+        await self.read_written_outdoor_temperature()
         await self.read_thermostat_name()
         await self.configure_cos()
         await self.read_dehumidification_setpoint()
@@ -166,9 +168,21 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             asyncio.ensure_future(self.reconnect_action())
 
     async def read_sensors(self):
-        """Send a request for updated sensor data"""
+        """Send a request for updated controlling sensor data"""
         await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+        )
+
+    async def read_sensor_values(self):
+        """Send a request for the full sensor values array"""
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+        )
+
+    async def read_written_outdoor_temperature(self):
+        """Send a request for the written outdoor temperature value"""
+        await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
         )
 
     async def read_control(self):
@@ -336,7 +350,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                     1,  # Thermostat Location & Name
                     0,  # Reserved
                     1,  # Controlling Sensor Values
-                    0,  # Over the air ODT update timeout
+                    1,  # Over the air ODT update timeout
                     1,  # Thermostat Status
                     1,  # IAQ Status
                     1,  # Model & Revision
@@ -370,8 +384,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 4)
         )
 
-    async def set_written_outdoor_temperature_value(self, value: int):
+    async def set_written_outdoor_temperature_value(self, value: float):
         """Send a request to update the written outdoor temperature value"""
+        value = round(value * 2) / 2
+
         await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -379,11 +395,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 4,
                 data={
                     Attribute.OUTDOOR_SENSOR_STATUS: 0,
-                    Attribute.OUTDOOR_SENSOR: value
-                }
+                    Attribute.OUTDOOR_SENSOR: value,
+                },
             )
         )
-    
+
+        await self.read_written_outdoor_temperature()
+
     async def read_thermostat_iaq_available(self):
         """Send a request to read the thermostat/IAQ available data"""
         await self._send_packet(
@@ -515,8 +533,16 @@ class AprilaireClient(SocketClient):
             return None
 
     async def read_sensors(self):
-        """Send a request for updated sensor data"""
+        """Send a request for updated controlling sensor data"""
         await self.protocol.read_sensors()
+
+    async def read_sensor_values(self):
+        """Send a request for the full sensor values array"""
+        await self.protocol.read_sensor_values()
+
+    async def read_written_outdoor_temperature(self):
+        """Send a request for the written outdoor temperature value"""
+        await self.protocol.read_written_outdoor_temperature()
 
     async def read_control(self):
         """Send a request for updated control data"""
@@ -546,6 +572,10 @@ class AprilaireClient(SocketClient):
         """Send a request to sync data"""
         await self.protocol.sync()
 
+    async def configure_cos(self):
+        """Send a request to configure the COS settings"""
+        await self.protocol.configure_cos()
+
     async def read_mac_address(self):
         """Send a request to read the MAC address"""
         await self.protocol.read_mac_address()
@@ -566,7 +596,7 @@ class AprilaireClient(SocketClient):
     async def set_air_cleaning(self, mode: int, event: int):
         await self.protocol.set_air_cleaning(mode, event)
 
-    async def set_written_outdoor_temperature_value(self, value: int):
+    async def set_written_outdoor_temperature_value(self, value: float):
         """Send a request to update the written outdoor temperature value"""
         await self.protocol.set_written_outdoor_temperature_value(value)
     

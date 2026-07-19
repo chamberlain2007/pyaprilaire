@@ -55,7 +55,7 @@ async def test_protocol_update_status(protocol: _AprilaireClientProtocol):
     with patch("asyncio.sleep", new=sleep_mock):
         await protocol._update_status()
 
-    assert protocol.packet_queue.qsize() == 9
+    assert protocol.packet_queue.qsize() == 11
     assert sleep_mock.call_count == 1
 
 
@@ -186,6 +186,24 @@ async def test_protocol_read_sensors(protocol: _AprilaireClientProtocol):
     )
 
 
+async def test_protocol_read_sensor_values(protocol: _AprilaireClientProtocol):
+    await protocol.read_sensor_values()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+    )
+
+
+async def test_protocol_read_written_outdoor_temperature(
+    protocol: _AprilaireClientProtocol,
+):
+    await protocol.read_written_outdoor_temperature()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
+    )
+
+
 async def test_protocol_read_control(protocol: _AprilaireClientProtocol):
     await protocol.read_control()
 
@@ -292,7 +310,23 @@ async def test_protocol_sync(protocol: _AprilaireClientProtocol):
 
 
 async def test_protocol_configure_cos(protocol: _AprilaireClientProtocol):
-    pass
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+    cos_packets = [
+        packet
+        for packet in queue_items
+        if packet.action == Action.WRITE
+        and packet.functional_domain == FunctionalDomain.STATUS
+        and packet.attribute == 1
+    ]
+
+    assert len(cos_packets) == 1
+    raw_data = cos_packets[0].raw_data
+    assert raw_data is not None
+    assert len(raw_data) == 29
+    assert raw_data[22] == 1  # Controlling Sensor Values
+    assert raw_data[23] == 1  # Over the air ODT update timeout
 
 
 async def test_protocol_read_mac_address(protocol: _AprilaireClientProtocol):
@@ -429,6 +463,26 @@ async def test_client_read_sensors(
 
     assertPacketQueueContains(
         protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+    )
+
+
+async def test_client_read_sensor_values(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_sensor_values()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+    )
+
+
+async def test_client_read_written_outdoor_temperature(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_written_outdoor_temperature()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
     )
 
 
@@ -626,7 +680,23 @@ async def test_client_sync(client: AprilaireClient, protocol: _AprilaireClientPr
 async def test_client_configure_cos(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
-    pass
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+    cos_packets = [
+        packet
+        for packet in queue_items
+        if packet.action == Action.WRITE
+        and packet.functional_domain == FunctionalDomain.STATUS
+        and packet.attribute == 1
+    ]
+
+    assert len(cos_packets) == 1
+    raw_data = cos_packets[0].raw_data
+    assert raw_data is not None
+    assert len(raw_data) == 29
+    assert raw_data[22] == 1  # Controlling Sensor Values
+    assert raw_data[23] == 1  # Over the air ODT update timeout
 
 
 async def test_client_read_mac_address(
@@ -686,9 +756,56 @@ async def test_client_set_written_outdoor_temperature_value(
             4,
             data={
                 Attribute.OUTDOOR_SENSOR_STATUS: 0,
-                Attribute.OUTDOOR_SENSOR: 10
-            }
-        )
+                Attribute.OUTDOOR_SENSOR: 10,
+            },
+        ),
+    )
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
+    )
+
+
+async def test_client_set_written_outdoor_temperature_value_half_degree(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.set_written_outdoor_temperature_value(21.5)
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.SENSORS,
+            4,
+            data={
+                Attribute.OUTDOOR_SENSOR_STATUS: 0,
+                Attribute.OUTDOOR_SENSOR: 21.5,
+            },
+        ),
+    )
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
+    )
+
+
+async def test_protocol_set_written_outdoor_temperature_value(
+    protocol: _AprilaireClientProtocol,
+):
+    await protocol.set_written_outdoor_temperature_value(21.7)
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.SENSORS,
+            4,
+            data={
+                Attribute.OUTDOOR_SENSOR_STATUS: 0,
+                Attribute.OUTDOOR_SENSOR: 21.5,
+            },
+        ),
+    )
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
     )
 
 async def test_client_read_thermostat_iaq_available(
