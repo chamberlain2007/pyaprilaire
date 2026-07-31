@@ -67,9 +67,10 @@ CLOUD_COGNITO_USER_POOL_ID = "us-west-2_skfkpmVv6"
 CLOUD_COGNITO_CLIENT_ID = "3aiakr6qdoqtajv7qgtapecerg"
 CLOUD_COGNITO_REGION = "us-west-2"
 
-# Dehumidifier setpoint limits
-DEHUMIDIFICATION_SETPOINT_MIN = 1
-DEHUMIDIFICATION_SETPOINT_MAX = 99
+# Dehumidifier setpoint limits. The device silently ignores writes outside
+# this range (the API returns 200 but the setting never applies).
+DEHUMIDIFICATION_SETPOINT_MIN = 40
+DEHUMIDIFICATION_SETPOINT_MAX = 80
 
 
 class Attribute(StrEnum):
