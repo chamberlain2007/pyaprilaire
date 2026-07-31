@@ -59,6 +59,18 @@ MODELS = {
 
 QUEUE_FREQUENCY = 0.5
 
+# Cloud API (v2 - aprilaire.io)
+CLOUD_DEVICE_API_BASE = "https://device.aprilaire.io"
+CLOUD_ACCOUNT_API_BASE = "https://account.aprilaire.io"
+CLOUD_WEBSOCKET_URL = "wss://socket.aprilaire.io/"
+CLOUD_COGNITO_USER_POOL_ID = "us-west-2_skfkpmVv6"
+CLOUD_COGNITO_CLIENT_ID = "3aiakr6qdoqtajv7qgtapecerg"
+CLOUD_COGNITO_REGION = "us-west-2"
+
+# Dehumidifier setpoint limits
+DEHUMIDIFICATION_SETPOINT_MIN = 1
+DEHUMIDIFICATION_SETPOINT_MAX = 99
+
 
 class Attribute(StrEnum):
     ERROR = "error"

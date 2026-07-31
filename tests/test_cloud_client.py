@@ -1,0 +1,363 @@
+"""Tests for the cloud API v2 client."""
+
+from __future__ import annotations
+
+import logging
+from unittest.mock import MagicMock, patch
+
+import aiohttp
+import pytest
+from aioresponses import aioresponses
+
+from pyaprilaire.cloud_client import (
+    AprilaireCloudClient,
+    CloudClientAuthError,
+    CloudClientRequestError,
+)
+from pyaprilaire.const import CLOUD_DEVICE_API_BASE
+
+BASE = CLOUD_DEVICE_API_BASE
+DEVICE_ID = "BC8D7EECB7D1"
+
+
+@pytest.fixture
+def logger():
+    return logging.getLogger("test_cloud")
+
+
+def _mock_cognito():
+    """Return a mock Cognito object with tokens set."""
+    mock = MagicMock()
+    mock.id_token = "mock-id-token"
+    mock.access_token = "mock-access-token"
+    mock.refresh_token = "mock-refresh-token"
+    return mock
+
+
+@pytest.fixture
+def client(logger):
+    c = AprilaireCloudClient("user@example.com", "password123", logger)
+    c._cognito = _mock_cognito()
+    return c
+
+
+def _hierarchy_response():
+    return {
+        "locations": [
+            {
+                "locationId": "loc-1",
+                "name": "Home",
+                "timeZone": "America/Los_Angeles",
+                "rooms": [
+                    {
+                        "name": "Whole Home",
+                        "devices": [
+                            {"deviceId": DEVICE_ID, "access": "manage", "zone": 1}
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _dehum_status_response():
+    return {
+        "deviceId": DEVICE_ID,
+        "asOf": "2026-05-25T20:27:36.650Z",
+        "equipmentStatus": "inactive",
+        "alerts": {"highTemp": False, "lowHum": False, "highHum": False, "lowTemp": False},
+        "fanTimeHours": 0,
+        "filterService": {"needsService": False, "remaining": 100},
+        "humSensors": [
+            {
+                "reading": 47,
+                "uid": 1,
+                "isControlling": True,
+                "type": "inlet-air",
+                "isWireless": False,
+                "status": "reporting",
+            }
+        ],
+        "isCompOn": False,
+        "isDehumFanOn": False,
+        "isHvacFanOn": False,
+        "tempSensors": [],
+        "wifiRSSI": -43,
+    }
+
+
+def _device_settings_response():
+    return {
+        "deviceId": DEVICE_ID,
+        "asOf": "2026-05-25T20:20:41.265Z",
+        "dehumidifier": {
+            "mode": "on",
+            "humiditySetpoint": 50,
+            "sensors": [{"uid": 1, "dispName": "Inlet Air"}],
+        },
+    }
+
+
+# --- Authentication ---
+
+
+async def test_authenticate_success(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+    mock_cognito = _mock_cognito()
+
+    with patch("pyaprilaire.cloud_client.Cognito", return_value=mock_cognito):
+        result = await client.authenticate()
+
+    assert result is True
+    assert client.id_token == "mock-id-token"
+    await client.close()
+
+
+async def test_authenticate_failure(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+
+    with patch(
+        "pyaprilaire.cloud_client.Cognito",
+        side_effect=Exception("Bad credentials"),
+    ):
+        result = await client.authenticate()
+
+    assert result is False
+    assert client.id_token is None
+    await client.close()
+
+
+# --- Token Refresh ---
+
+
+async def test_refresh_token_success(client):
+    result = await client.refresh_token()
+    assert result is True
+    client._cognito.renew_access_token.assert_called_once()
+    await client.close()
+
+
+async def test_refresh_token_not_authenticated(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+    result = await client.refresh_token()
+    assert result is False
+    await client.close()
+
+
+async def test_refresh_token_failure(client):
+    client._cognito.renew_access_token.side_effect = Exception("expired")
+    result = await client.refresh_token()
+    assert result is False
+    await client.close()
+
+
+async def test_auto_refresh_on_401(client):
+    with aioresponses() as m:
+        m.get(f"{BASE}/hierarchy", status=401, body="Unauthorized")
+        client._cognito.renew_access_token.return_value = None
+        m.get(f"{BASE}/hierarchy", payload=_hierarchy_response())
+
+        hierarchy = await client.get_hierarchy()
+
+        assert len(hierarchy.locations) == 1
+        await client.close()
+
+
+async def test_auto_refresh_on_401_fails(client):
+    with aioresponses() as m:
+        m.get(f"{BASE}/hierarchy", status=401, body="Unauthorized")
+        client._cognito.renew_access_token.side_effect = Exception("expired")
+
+        with pytest.raises(CloudClientAuthError, match="Token refresh failed"):
+            await client.get_hierarchy()
+        await client.close()
+
+
+# --- Get Hierarchy ---
+
+
+async def test_get_hierarchy(client):
+    with aioresponses() as m:
+        m.get(f"{BASE}/hierarchy", payload=_hierarchy_response())
+
+        hierarchy = await client.get_hierarchy()
+
+        assert len(hierarchy.locations) == 1
+        assert hierarchy.device_ids == [DEVICE_ID]
+        await client.close()
+
+
+async def test_get_hierarchy_not_authenticated(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+    with pytest.raises(CloudClientAuthError):
+        await client.get_hierarchy()
+    await client.close()
+
+
+# --- Get Device Status ---
+
+
+async def test_get_device_status(client):
+    payload = {
+        "deviceId": DEVICE_ID,
+        "asOf": "2026-05-25T17:44:35.171Z",
+        "hardwareRev": "D",
+        "firmwareRev": "1.1.3",
+        "altFirmwareRev": "1.9.0",
+        "model": "E080W",
+    }
+    with aioresponses() as m:
+        m.get(f"{BASE}/{DEVICE_ID}/status", payload=payload)
+
+        status = await client.get_device_status(DEVICE_ID)
+
+        assert status.device_id == DEVICE_ID
+        assert status.model == "E080W"
+        assert status.firmware_rev == "1.1.3"
+        await client.close()
+
+
+# --- Get Dehumidifier Status ---
+
+
+async def test_get_dehumidifier_status(client):
+    with aioresponses() as m:
+        m.get(
+            f"{BASE}/{DEVICE_ID}/status/dehumidifier",
+            payload=_dehum_status_response(),
+        )
+
+        status = await client.get_dehumidifier_status(DEVICE_ID)
+
+        assert status.device_id == DEVICE_ID
+        assert status.equipment_status == "inactive"
+        assert len(status.hum_sensors) == 1
+        assert status.hum_sensors[0].reading == 47.0
+        assert status.wifi_rssi == -43
+        await client.close()
+
+
+# --- Get Device Settings ---
+
+
+async def test_get_device_settings(client):
+    with aioresponses() as m:
+        m.get(
+            f"{BASE}/{DEVICE_ID}/settings",
+            payload=_device_settings_response(),
+        )
+
+        settings = await client.get_device_settings(DEVICE_ID)
+
+        assert settings.device_id == DEVICE_ID
+        assert settings.dehumidifier is not None
+        assert settings.dehumidifier.mode == "on"
+        assert settings.dehumidifier.humidity_setpoint == 50
+        await client.close()
+
+
+# --- Set Dehumidification Setpoint ---
+
+
+async def test_set_dehumidification_setpoint(client):
+    with aioresponses() as m:
+        m.patch(f"{BASE}/{DEVICE_ID}/settings", payload={})
+
+        result = await client.set_dehumidification_setpoint(DEVICE_ID, 55)
+
+        assert result is True
+        await client.close()
+
+
+async def test_set_dehumidification_setpoint_too_low(client):
+    with pytest.raises(ValueError, match="between 1 and 99"):
+        await client.set_dehumidification_setpoint(DEVICE_ID, 0)
+    await client.close()
+
+
+async def test_set_dehumidification_setpoint_too_high(client):
+    with pytest.raises(ValueError, match="between 1 and 99"):
+        await client.set_dehumidification_setpoint(DEVICE_ID, 100)
+    await client.close()
+
+
+async def test_set_dehumidification_setpoint_boundaries(client):
+    with aioresponses() as m:
+        m.patch(f"{BASE}/{DEVICE_ID}/settings", payload={})
+        m.patch(f"{BASE}/{DEVICE_ID}/settings", payload={})
+
+        assert await client.set_dehumidification_setpoint(DEVICE_ID, 1) is True
+        assert await client.set_dehumidification_setpoint(DEVICE_ID, 99) is True
+        await client.close()
+
+
+async def test_set_dehumidification_setpoint_not_authenticated(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+    with pytest.raises(CloudClientAuthError):
+        await client.set_dehumidification_setpoint(DEVICE_ID, 50)
+    await client.close()
+
+
+# --- Set Dehumidifier Mode ---
+
+
+async def test_set_dehumidifier_mode(client):
+    with aioresponses() as m:
+        m.patch(f"{BASE}/{DEVICE_ID}/settings", payload={})
+
+        result = await client.set_dehumidifier_mode(DEVICE_ID, "auto")
+
+        assert result is True
+        await client.close()
+
+
+async def test_set_dehumidifier_mode_not_authenticated(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+    with pytest.raises(CloudClientAuthError):
+        await client.set_dehumidifier_mode(DEVICE_ID, "on")
+    await client.close()
+
+
+# --- Retry Logic ---
+
+
+async def test_request_retries_on_connection_error(client):
+    with aioresponses() as m:
+        m.get(f"{BASE}/hierarchy", exception=aiohttp.ClientConnectionError())
+        m.get(f"{BASE}/hierarchy", exception=aiohttp.ClientConnectionError())
+        m.get(f"{BASE}/hierarchy", payload=_hierarchy_response())
+
+        hierarchy = await client.get_hierarchy()
+
+        assert len(hierarchy.locations) == 1
+        await client.close()
+
+
+async def test_request_fails_after_max_retries(client):
+    with aioresponses() as m:
+        m.get(f"{BASE}/hierarchy", exception=aiohttp.ClientConnectionError())
+        m.get(f"{BASE}/hierarchy", exception=aiohttp.ClientConnectionError())
+        m.get(f"{BASE}/hierarchy", exception=aiohttp.ClientConnectionError())
+
+        with pytest.raises(CloudClientRequestError, match="after 3 attempts"):
+            await client.get_hierarchy()
+        await client.close()
+
+
+# --- Close ---
+
+
+async def test_close_without_session(logger):
+    client = AprilaireCloudClient("user@example.com", "pw", logger)
+    await client.close()
+
+
+async def test_close_with_session(client):
+    with aioresponses() as m:
+        m.get(f"{BASE}/hierarchy", payload=_hierarchy_response())
+
+        await client.get_hierarchy()
+        assert client._session is not None
+        await client.close()
+        assert client._session is None

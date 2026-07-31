@@ -7,14 +7,16 @@ name = "pyaprilaire"
 version = "0.9.1"
 readme = "README.md"
 dependencies = [
-    "crc >= 4"
+    "crc >= 4",
+    "aiohttp >= 3",
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 
 [project.optional-dependencies]
-dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov"]
+cloud = ["pycognito >= 2024"]
+dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov", "aioresponses"]
 
 [tool.bumpver]
 current_version = "0.9.1"
