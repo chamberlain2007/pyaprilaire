@@ -16,7 +16,18 @@ classifiers = [
 
 [project.optional-dependencies]
 cloud = ["pycognito >= 2024"]
-dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov", "aioresponses"]
+# aiohttp is capped in dev because aioresponses 0.7.9 does not support
+# the aiohttp 3.14 ClientResponse signature; the runtime dependency is uncapped.
+dev = [
+    "black",
+    "bumpver",
+    "isort",
+    "pip-tools",
+    "pytest-asyncio",
+    "pytest-cov",
+    "aioresponses",
+    "aiohttp < 3.14",
+]
 
 [tool.bumpver]
 current_version = "0.9.1"

@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from logging import Logger
 from typing import Any
 
 import aiohttp
+from botocore.exceptions import BotoCoreError, ClientError
 from pycognito import Cognito
 
-from .cloud_models import (
-    DehumidifierStatus,
-    DeviceSettings,
-    DeviceStatus,
-    Hierarchy,
-)
+from .cloud_models import DehumidifierStatus, DeviceSettings, DeviceStatus, Hierarchy
 from .const import (
     CLOUD_COGNITO_CLIENT_ID,
     CLOUD_COGNITO_USER_POOL_ID,
@@ -25,6 +22,17 @@ from .const import (
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 3
 
+# Cognito error codes that indicate a credential problem rather than a
+# transient/network failure.
+AUTH_ERROR_CODES = frozenset(
+    {
+        "NotAuthorizedException",
+        "UserNotFoundException",
+        "UserNotConfirmedException",
+        "PasswordResetRequiredException",
+    }
+)
+
 
 class CloudClientAuthError(Exception):
     """Raised when authentication fails."""
@@ -34,21 +42,41 @@ class CloudClientRequestError(Exception):
     """Raised when an API request fails."""
 
 
+def _classify_cognito_error(err: Exception) -> Exception:
+    """Map a Cognito/boto error to a typed cloud client error."""
+    if isinstance(err, ClientError):
+        code = err.response.get("Error", {}).get("Code", "")
+        if code in AUTH_ERROR_CODES:
+            return CloudClientAuthError(f"Authentication failed: {code}")
+        return CloudClientRequestError(f"Cognito request failed: {code}")
+    if isinstance(err, BotoCoreError):
+        return CloudClientRequestError(f"Cognito connection failed: {err}")
+    return CloudClientAuthError(f"Authentication failed: {err}")
+
+
 class AprilaireCloudClient:
     """Async client for the Aprilaire cloud API (v2)."""
 
-    def __init__(self, username: str, password: str, logger: Logger) -> None:
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        logger: Logger,
+        session: aiohttp.ClientSession | None = None,
+    ) -> None:
         self.username = username
         self.password = password
         self.logger = logger
 
         self._cognito: Cognito | None = None
-        self._session: aiohttp.ClientSession | None = None
+        self._session = session
+        self._owns_session = session is None
+        self._auth_lock = asyncio.Lock()
 
     def _get_session(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+        if self._session is None or (self._owns_session and self._session.closed):
+            self._session = aiohttp.ClientSession()
+            self._owns_session = True
         return self._session
 
     def _headers(self) -> dict[str, str]:
@@ -71,16 +99,22 @@ class AprilaireCloudClient:
             try:
                 session = self._get_session()
                 async with session.request(
-                    method, url, json=json, headers=self._headers()
+                    method,
+                    url,
+                    json=json,
+                    headers=self._headers(),
+                    timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
                 ) as resp:
-                    if resp.status == 401 and retry_auth and self._cognito:
-                        self.logger.info("Token expired, refreshing")
-                        refreshed = await self.refresh_token()
-                        if refreshed:
+                    if resp.status == 401:
+                        if retry_auth and self._cognito:
+                            self.logger.info("Token expired, refreshing")
+                            await self.refresh_token()
                             return await self._request(
                                 method, path, json=json, retry_auth=False
                             )
-                        raise CloudClientAuthError("Token refresh failed")
+                        raise CloudClientAuthError(
+                            "Request unauthorized after token refresh"
+                        )
 
                     if resp.status >= 400:
                         text = await resp.text()
@@ -89,7 +123,7 @@ class AprilaireCloudClient:
                         )
 
                     return await resp.json(content_type=None)
-            except (aiohttp.ClientError, TimeoutError) as err:
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 self.logger.warning(
                     "Request attempt %d/%d failed: %s",
                     attempt + 1,
@@ -101,36 +135,54 @@ class AprilaireCloudClient:
                         f"Request failed after {MAX_RETRIES} attempts"
                     ) from err
 
-    async def authenticate(self) -> bool:
-        """Authenticate with Cognito SRP."""
-        try:
-            self._cognito = Cognito(
-                CLOUD_COGNITO_USER_POOL_ID,
-                CLOUD_COGNITO_CLIENT_ID,
-                username=self.username,
-            )
-            self._cognito.authenticate(password=self.password)
-        except Exception as err:
-            self.logger.error("Cognito authentication failed: %s", err)
-            self._cognito = None
-            return False
+    def _authenticate_sync(self) -> Cognito:
+        """Perform blocking Cognito SRP authentication."""
+        cognito = Cognito(
+            CLOUD_COGNITO_USER_POOL_ID,
+            CLOUD_COGNITO_CLIENT_ID,
+            username=self.username,
+        )
+        cognito.authenticate(password=self.password)
+        return cognito
+
+    async def authenticate(self) -> None:
+        """Authenticate with Cognito SRP.
+
+        Raises CloudClientAuthError for credential problems and
+        CloudClientRequestError for network/service failures.
+        """
+        loop = asyncio.get_running_loop()
+        async with self._auth_lock:
+            try:
+                self._cognito = await loop.run_in_executor(
+                    None, self._authenticate_sync
+                )
+            except Exception as err:
+                self.logger.error("Cognito authentication failed: %s", err)
+                self._cognito = None
+                raise _classify_cognito_error(err) from err
 
         self.logger.info("Authenticated via Cognito")
-        return True
 
-    async def refresh_token(self) -> bool:
-        """Refresh the Cognito tokens."""
+    async def refresh_token(self) -> None:
+        """Refresh the Cognito tokens.
+
+        Raises CloudClientAuthError if there is no session or the refresh
+        token is no longer valid, and CloudClientRequestError for
+        network/service failures.
+        """
         if not self._cognito:
-            return False
+            raise CloudClientAuthError("Not authenticated")
 
-        try:
-            self._cognito.renew_access_token()
-        except Exception as err:
-            self.logger.error("Cognito token refresh failed: %s", err)
-            return False
+        loop = asyncio.get_running_loop()
+        async with self._auth_lock:
+            try:
+                await loop.run_in_executor(None, self._cognito.renew_access_token)
+            except Exception as err:
+                self.logger.error("Cognito token refresh failed: %s", err)
+                raise _classify_cognito_error(err) from err
 
         self.logger.info("Cognito token refreshed")
-        return True
 
     @property
     def id_token(self) -> str | None:
@@ -153,9 +205,7 @@ class AprilaireCloudClient:
         data = await self._request("GET", f"/{device_id}/status")
         return DeviceStatus.from_dict(data or {})
 
-    async def get_dehumidifier_status(
-        self, device_id: str
-    ) -> DehumidifierStatus:
+    async def get_dehumidifier_status(self, device_id: str) -> DehumidifierStatus:
         """Get dehumidifier status (sensors, alerts, equipment state)."""
         if not self._cognito:
             raise CloudClientAuthError("Not authenticated")
@@ -178,7 +228,11 @@ class AprilaireCloudClient:
         if not self._cognito:
             raise CloudClientAuthError("Not authenticated")
 
-        if not DEHUMIDIFICATION_SETPOINT_MIN <= setpoint <= DEHUMIDIFICATION_SETPOINT_MAX:
+        if (
+            not DEHUMIDIFICATION_SETPOINT_MIN
+            <= setpoint
+            <= DEHUMIDIFICATION_SETPOINT_MAX
+        ):
             raise ValueError(
                 f"Setpoint must be between {DEHUMIDIFICATION_SETPOINT_MIN} "
                 f"and {DEHUMIDIFICATION_SETPOINT_MAX}, got {setpoint}"
@@ -198,7 +252,8 @@ class AprilaireCloudClient:
         return True
 
     async def close(self) -> None:
-        """Close the HTTP session."""
-        if self._session and not self._session.closed:
+        """Close the HTTP session if this client owns it."""
+        if self._owns_session and self._session and not self._session.closed:
             await self._session.close()
+        if self._owns_session:
             self._session = None
