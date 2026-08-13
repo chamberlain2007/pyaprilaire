@@ -4,8 +4,8 @@ from pyaprilaire.cli import commands as commands_module
 from pyaprilaire.cli.commands import (
     CommandParameter,
     MappingField,
+    build_field_packet,
     build_packet,
-    describe_packet_fields,
     discover_client_commands,
     find_command,
     has_payload,
@@ -102,15 +102,30 @@ def test_parse_hex_bytes():
     expected = bytes([1, 2, 10, 255])
 
     assert parse_hex_bytes("01 02 0a ff") == expected
-    assert parse_hex_bytes("0102 0aff") == expected
-    assert parse_hex_bytes("0x01, 0x02, 0x0A, 0xFF") == expected
-    assert parse_hex_bytes("1 2 a ff") == expected
+    assert parse_hex_bytes("01020aff") == expected
+    assert parse_hex_bytes("0102 0aFF") == expected
+    assert parse_hex_bytes("  01   02 0a ff  ") == expected
 
 
-def test_parse_hex_bytes_rejects_invalid():
-    with pytest.raises(ValueError, match="not a valid hex byte"):
+def test_parse_hex_bytes_rejects_anything_but_hex():
+    with pytest.raises(ValueError, match="'z' is not a hex digit"):
         parse_hex_bytes("zz")
 
+    # Separators and prefixes are not hex, so they are rejected rather than
+    # guessed at
+    with pytest.raises(ValueError, match="',' is not a hex digit"):
+        parse_hex_bytes("01,02")
+
+    with pytest.raises(ValueError, match="'x' is not a hex digit"):
+        parse_hex_bytes("0x01 0x02")
+
+
+def test_parse_hex_bytes_rejects_half_a_byte():
+    with pytest.raises(ValueError, match="3 hex digits is not a whole number"):
+        parse_hex_bytes("01 2")
+
+
+def test_parse_hex_bytes_rejects_nothing():
     with pytest.raises(ValueError, match="No bytes were provided"):
         parse_hex_bytes("   ")
 
@@ -223,25 +238,35 @@ def test_parse_enum_rejects_unknown():
         parse_enum(Action, "nope")
 
 
-def test_describe_packet_fields():
-    assert "mode (INTEGER_REQUIRED)" in describe_packet_fields(
-        Action.WRITE, FunctionalDomain.CONTROL, 1
+def test_build_field_packet():
+    packet = build_field_packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        {"mode": "3", "fan_mode": "2", "heat_setpoint": "20", "cool_setpoint": "25"},
     )
 
-
-def test_describe_packet_fields_unknown():
-    description = describe_packet_fields(Action.WRITE, FunctionalDomain.CONTROL, 99)
-
-    assert "No known fields" in description
-    assert "Known attributes: 1, 3, 4, 5, 6, 7" in description
+    assert packet.data[Attribute.MODE] == 3
+    assert packet.data[Attribute.COOL_SETPOINT] == 25
 
 
-def test_describe_packet_fields_without_payload():
-    description = describe_packet_fields(
-        Action.READ_REQUEST, FunctionalDomain.CONTROL, 99
+def test_build_field_packet_fills_in_missing_fields():
+    packet = build_field_packet(
+        Action.WRITE, FunctionalDomain.CONTROL, 1, {"mode": "3"}
     )
 
-    assert "READ_REQUEST has no payload" in description
+    assert packet.data[Attribute.MODE] == 3
+    assert packet.data[Attribute.FAN_MODE] == 0
+
+
+def test_build_field_packet_rejects_a_bad_value():
+    with pytest.raises(ValueError, match="mode must be an integer"):
+        build_field_packet(Action.WRITE, FunctionalDomain.CONTROL, 1, {"mode": "cool"})
+
+
+def test_build_field_packet_requires_known_fields():
+    with pytest.raises(ValueError, match="has no known fields"):
+        build_field_packet(Action.WRITE, FunctionalDomain.CONTROL, 99, {})
 
 
 def test_parameter_display_with_a_default():
@@ -318,12 +343,5 @@ def test_mapping_field_rejects_a_bad_integer():
         field.parse("cool")
 
 
-def test_parse_hex_bytes_rejects_an_empty_token():
-    with pytest.raises(ValueError, match="No bytes were provided"):
-        parse_hex_bytes("0x")
-
-
-def test_describe_packet_fields_for_an_unknown_domain():
-    description = describe_packet_fields(Action.WRITE, FunctionalDomain.ALERTS, 1)
-
-    assert description == "No known fields, enter the payload as hex."
+def test_mapping_fields_for_an_unknown_domain():
+    assert mapping_fields(Action.WRITE, FunctionalDomain.ALERTS, 1) == []

@@ -40,6 +40,8 @@ _TYPE_NAMES = {
 _TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
 _FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
 
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
 
 @dataclass
 class CommandParameter:
@@ -386,68 +388,71 @@ def build_packet(
     return Packet(action, functional_domain, attribute)
 
 
-def describe_packet_fields(
-    action: Action, functional_domain: FunctionalDomain, attribute: int
-) -> str:
-    """Describe the known payload fields of a packet in a single line"""
+def build_field_packet(
+    action: Action,
+    functional_domain: FunctionalDomain,
+    attribute: int,
+    values: dict[str, str],
+) -> Packet:
+    """Build a packet from the text entered for each of its named fields
+
+    A field that was left out is sent as its empty value, as a packet can
+    only be serialized once all of its fields have one.
+
+    Raises:
+        ValueError: the packet has no known fields, or a value is not valid
+            for the field it was entered for
+    """
 
     fields = mapping_fields(action, functional_domain, attribute)
 
-    if fields:
-        return "Fields: " + ", ".join(
-            f"{mapping_field.name} ({mapping_field.type_name})"
+    if not fields:
+        raise ValueError(
+            f"{action.name} {functional_domain.name} attribute {attribute}"
+            " has no known fields, so a raw payload must be given"
+        )
+
+    return Packet(
+        action,
+        functional_domain,
+        attribute,
+        data={
+            mapping_field.name: mapping_field.parse(values.get(mapping_field.name, ""))
             for mapping_field in fields
-        )
-
-    attributes = known_attributes(action, functional_domain)
-
-    if has_payload(action):
-        description = "No known fields, enter the payload as hex."
-    else:
-        description = f"{action.name} has no payload."
-
-    if attributes:
-        description += " Known attributes: " + ", ".join(
-            str(known) for known in attributes
-        )
-
-    return description
+        },
+    )
 
 
 def parse_hex_bytes(text: str) -> bytes:
     """Parse text as a sequence of hex bytes
 
-    Bytes may be separated by spaces or commas or not at all, and may
-    optionally be prefixed with 0x, so all of the following are equivalent:
-    `01 02 0a`, `0102 0a`, `0x01, 0x02, 0x0A`.
+    Nothing but pairs of hex digits is accepted. Spaces may be used to
+    separate them, or left out entirely, so `01 02 0a` and `01020a` are the
+    same bytes, and anything else is rejected rather than guessed at.
 
     Raises:
         ValueError: the text is not a valid sequence of hex bytes
     """
 
-    tokens = text.replace(",", " ").split()
+    digits = "".join(text.split())
 
-    if not tokens:
+    if not digits:
         raise ValueError("No bytes were provided")
 
-    data = bytearray()
+    for character in digits:
+        if character not in _HEX_DIGITS:
+            raise ValueError(
+                f"'{character}' is not a hex digit."
+                " Enter pairs of hex digits, such as 01 02 0a"
+            )
 
-    for token in tokens:
-        if token.lower().startswith("0x"):
-            token = token[2:]
+    if len(digits) % 2:
+        raise ValueError(
+            f"{len(digits)} hex digits is not a whole number of bytes."
+            " Each byte is a pair of hex digits, such as 01 02 0a"
+        )
 
-        if not token:
-            raise ValueError("No bytes were provided")
-
-        if len(token) == 1:
-            token = f"0{token}"
-
-        try:
-            data.extend(bytes.fromhex(token))
-        except ValueError:
-            raise ValueError(f"'{token}' is not a valid hex byte") from None
-
-    return bytes(data)
+    return bytes.fromhex(digits)
 
 
 def parse_enum(enum_class, text: str):

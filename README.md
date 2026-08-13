@@ -23,11 +23,13 @@ Installing the package also provides this as the `pyaprilaire` command. The port
 
 ## Sending commands
 
-There are three ways to send something to the device:
+Pressing enter asks which of the three ways to send something you want, and each of them is also a key of its own. Every list can be narrowed by typing, and escape goes back a step without sending anything.
 
-- **A client function.** The functions exposed by `AprilaireClient`, such as `update_setpoint` or `read_sensors`, are listed with their parameters. Choosing one prompts for the values it needs.
-- **A packet.** Choose an action, functional domain and attribute, and provide the data as either `name=value` pairs for a packet whose fields are known, or as the raw payload in hex for one that isn't. The sequence number and CRC are filled in as usual.
-- **Raw bytes.** The bytes are written exactly as entered, with nothing added or corrected, so deliberately malformed frames can be sent to see how a device responds. A calculated CRC can optionally be appended.
+- **A client function** (`f`). The functions exposed by `AprilaireClient`, such as `update_setpoint` or `read_sensors`, are listed with their parameters. Choosing one prompts for the values it needs.
+- **A packet** (`p`). The action, the functional domain and then the attribute are each chosen from a list, where the attributes that are known are shown along with the fields they carry, and any other attribute can be entered by number. A packet whose fields are known is then filled in a field at a time; one whose fields aren't takes its payload as hex; and an action that carries no payload, such as a read request, is sent as soon as its attribute is known. The sequence number and CRC are filled in as usual.
+- **Raw bytes** (`x`). The bytes are written exactly as entered, with nothing added or corrected, so deliberately malformed frames can be sent to see how a device responds. A calculated CRC can optionally be appended.
+
+Bytes are entered as pairs of hex digits, with or without spaces between them, so `01 02 0a` and `01020a` are the same three bytes. Anything else is rejected rather than guessed at, and the raw bytes dialog says what is wrong as you type.
 
 ## Reading messages
 

@@ -39,8 +39,9 @@ Commands:
   packet <action> <domain> <attribute> [values]
                               Send a packet, where values are either name=value
                               pairs for a known packet or raw payload hex
-  hex <bytes>                 Write raw bytes exactly as given
-  hexcrc <bytes>              Write raw bytes with a calculated CRC appended
+  hex <bytes>                 Write raw bytes exactly as given, as pairs of hex
+                              digits with or without spaces, e.g. 01 02 0a
+  hexcrc <bytes>              The same, with a calculated CRC appended
   fields <action> <domain> <attribute>
                               Show the known payload fields of a packet
   state                       Show the data received from the device so far

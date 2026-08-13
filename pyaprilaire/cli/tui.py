@@ -25,15 +25,17 @@ from textual.widgets import (
     Label,
     OptionList,
     RichLog,
-    Select,
     Static,
 )
 
 from ..const import Action, FunctionalDomain
 from .commands import (
     ClientCommand,
+    build_field_packet,
     build_packet,
-    describe_packet_fields,
+    has_payload,
+    known_attributes,
+    mapping_fields,
     parse_hex_bytes,
 )
 from .session import (
@@ -56,23 +58,40 @@ ENTRY_STYLES = {
 
 HELP_TEXT = """
 [b]Sending[/b]
-  f   Run one of the functions exposed by the client
-  p   Build a packet from an action, functional domain, attribute and data
-  x   Write raw hex bytes exactly as entered, with an optional CRC
-  r   Repeat the last thing that was sent
+  enter   Choose one of the three ways to send something
+  f       Run one of the functions exposed by the client
+  p       Build a packet from an action, functional domain, attribute and data
+  x       Write raw hex bytes exactly as entered, with an optional CRC
+  r       Repeat the last thing that was sent
 
 [b]Session[/b]
-  k   Connect or disconnect
-  s   Show or hide the device state
-  d   Show or hide hex dumps and full payloads
-  c   Clear the log
-  w   Write the log to a file
-  q   Quit
+  k       Connect or disconnect
+  s       Show or hide the device state
+  d       Show or hide hex dumps and full payloads
+  c       Clear the log
+  w       Write the log to a file
+  q       Quit
+
+Every list can be narrowed by typing, and escape goes back without sending
+anything.
 
 Every message is shown as the bytes that were on the wire and as the values
 decoded from them. A frame that can't be decoded still shows its header, its
 payload and whether its CRC is valid.
 """.strip()
+
+FUNCTION = "function"
+PACKET = "packet"
+RAW = "raw"
+
+SEND_OPTIONS = [
+    ("Client function  -  run one of the functions exposed by the client", FUNCTION),
+    ("Packet  -  choose an action, functional domain, attribute and data", PACKET),
+    ("Raw hex  -  write bytes exactly as entered", RAW),
+]
+
+# Chosen in place of an attribute when the wanted one isn't a known attribute
+OTHER_ATTRIBUTE = object()
 
 
 class SelectionScreen(ModalScreen[Any]):
@@ -148,7 +167,7 @@ class SelectionScreen(ModalScreen[Any]):
 
 
 class FormScreen(ModalScreen[Any]):
-    """A dialog of text fields, with an optional checkbox"""
+    """A dialog of text fields"""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
@@ -157,14 +176,12 @@ class FormScreen(ModalScreen[Any]):
         title: str,
         fields: list[tuple[str, str]],
         description: str = "",
-        checkbox: str = None,
     ) -> None:
         super().__init__()
 
         self.title_text = title
         self.fields = fields
         self.description = description
-        self.checkbox = checkbox
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -177,9 +194,6 @@ class FormScreen(ModalScreen[Any]):
                 for index, (label, placeholder) in enumerate(self.fields):
                     yield Label(label)
                     yield Input(placeholder=placeholder, id=f"field-{index}")
-
-            if self.checkbox:
-                yield Checkbox(self.checkbox, id="checkbox")
 
             with Horizontal(id="buttons"):
                 yield Button("Send", variant="primary", id="submit")
@@ -197,9 +211,7 @@ class FormScreen(ModalScreen[Any]):
             for index in range(len(self.fields))
         ]
 
-        checked = bool(self.checkbox) and self.query_one("#checkbox", Checkbox).value
-
-        self.dismiss({"values": values, "checked": checked})
+        self.dismiss({"values": values})
 
     def on_input_submitted(self) -> None:
         """Submit the form when enter is pressed in a field"""
@@ -218,106 +230,89 @@ class FormScreen(ModalScreen[Any]):
         self.dismiss(None)
 
 
-class PacketScreen(ModalScreen[Any]):
-    """A dialog for building a packet from its parts"""
+class RawScreen(ModalScreen[Any]):
+    """A dialog for writing raw bytes, entered as hex
+
+    The bytes are checked as they are typed, as they are written to the
+    device exactly as they are entered and so can't be corrected afterwards.
+    """
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self) -> None:
         super().__init__()
 
-        # The description of the currently selected packet, kept so that it
-        # can be shown and checked without reading it back out of the widget
+        # The bytes that were entered, or None while what has been entered
+        # isn't a valid sequence of them, along with what to say about it
+        self.data = None
         self.hint = ""
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Label("Send a packet", id="dialog-title")
-
-            yield Label("Action")
-            yield Select(
-                [(action.name, action) for action in Action],
-                value=Action.READ_REQUEST,
-                allow_blank=False,
-                id="action",
+            yield Label("Send raw bytes", id="dialog-title")
+            yield Static(
+                "The bytes are written exactly as entered, so the sequence"
+                " number and CRC are not corrected.",
+                classes="description",
             )
 
-            yield Label("Functional domain")
-            yield Select(
-                [(domain.name, domain) for domain in FunctionalDomain],
-                value=FunctionalDomain.CONTROL,
-                allow_blank=False,
-                id="domain",
-            )
+            yield Label("Bytes as hex")
+            yield Input(placeholder="01 02 00 03 02 05 02 c9", id="bytes")
+            yield Static("", id="bytes-hint", classes="description")
 
-            yield Label("Attribute")
-            yield Input(placeholder="1", id="attribute")
-
-            yield Static("", id="fields-hint", classes="description")
-
-            yield Label("Data")
-            yield Input(
-                placeholder="name=value pairs, or the payload as hex",
-                id="values",
-            )
+            yield Checkbox("Append a calculated CRC", id="checkbox")
 
             with Horizontal(id="buttons"):
                 yield Button("Send", variant="primary", id="submit")
                 yield Button("Cancel", id="cancel")
 
     def on_mount(self) -> None:
-        self.query_one("#attribute", Input).focus()
-        self._update_hint()
+        self.query_one("#bytes", Input).focus()
+        self._check()
 
-    def _update_hint(self) -> None:
-        """Describe the fields of the currently selected packet"""
+    def _check(self) -> None:
+        """Check what has been entered so far"""
 
-        attribute_text = self.query_one("#attribute", Input).value.strip()
+        text = self.query_one("#bytes", Input).value
 
-        try:
-            attribute = int(attribute_text, 0) if attribute_text else None
-        except ValueError:
-            attribute = None
-
-        if attribute is None:
-            self.hint = "Enter an attribute to see its known fields"
+        if not text.strip():
+            self.data = None
+            self.hint = "Pairs of hex digits, with or without spaces"
         else:
-            self.hint = describe_packet_fields(
-                self.query_one("#action", Select).value,
-                self.query_one("#domain", Select).value,
-                attribute,
-            )
+            try:
+                self.data = parse_hex_bytes(text)
+            except ValueError as exc:
+                self.data = None
+                self.hint = str(exc)
+            else:
+                self.hint = f"{len(self.data)} byte(s)"
 
-        self.query_one("#fields-hint", Static).update(self.hint)
+        self.query_one("#bytes-hint", Static).update(self.hint)
+        self.query_one("#submit", Button).disabled = self.data is None
 
-    def on_select_changed(self) -> None:
-        """Update the hint when the action or domain changes"""
-        self._update_hint()
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Update the hint when the attribute changes"""
-
-        if event.input.id == "attribute":
-            self._update_hint()
+    def on_input_changed(self) -> None:
+        """Check the bytes as they are typed"""
+        self._check()
 
     def _submit(self) -> None:
-        """Close, returning the parts of the packet"""
+        """Close, returning the bytes to write"""
+
+        if self.data is None:
+            return
 
         self.dismiss(
             {
-                "action": self.query_one("#action", Select).value,
-                "domain": self.query_one("#domain", Select).value,
-                "attribute": self.query_one("#attribute", Input).value,
-                "values": self.query_one("#values", Input).value,
+                "data": self.data,
+                "checked": self.query_one("#checkbox", Checkbox).value,
             }
         )
 
     def on_input_submitted(self) -> None:
-        """Submit the packet when enter is pressed in a field"""
+        """Send the bytes when enter is pressed"""
         self._submit()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Submit or cancel the packet"""
+        """Send the bytes, or close without sending them"""
 
         if event.button.id == "submit":
             self._submit()
@@ -416,6 +411,7 @@ class AprilaireTui(App):
     """
 
     BINDINGS = [
+        Binding("enter", "send", "Send"),
         Binding("f", "functions", "Functions"),
         Binding("p", "packet", "Packet"),
         Binding("x", "raw", "Raw hex"),
@@ -591,13 +587,46 @@ class AprilaireTui(App):
         except (SessionError, ValueError) as exc:
             self._report(exc)
 
+    async def _send(self, run) -> None:
+        """Send something, and remember it so that it can be repeated"""
+
+        self.repeat_action = run
+
+        try:
+            await run()
+        except SessionError as exc:
+            self._report(exc)
+
+    def action_send(self) -> None:
+        """Choose one of the ways of sending something"""
+        self._choose_what_to_send()
+
+    @work
+    async def _choose_what_to_send(self) -> None:
+        """Choose one of the ways of sending something and follow it through"""
+
+        choice = await self.push_screen_wait(
+            SelectionScreen("What would you like to send?", SEND_OPTIONS)
+        )
+
+        if choice == FUNCTION:
+            await self._function_flow()
+        elif choice == PACKET:
+            await self._packet_flow()
+        elif choice == RAW:
+            await self._raw_flow()
+
     def action_functions(self) -> None:
         """Run one of the functions exposed by the client"""
         self._choose_function()
 
     @work
     async def _choose_function(self) -> None:
-        """Choose a client function and prompt for its parameters"""
+        """Choose a client function and run it"""
+        await self._function_flow()
+
+    async def _function_flow(self) -> None:
+        """Choose a client function, prompt for its parameters and run it"""
 
         options = [
             (
@@ -641,12 +670,7 @@ class AprilaireTui(App):
         async def run() -> None:
             await self.session.run_command(command, arguments)
 
-        self.repeat_action = run
-
-        try:
-            await run()
-        except SessionError as exc:
-            self._report(exc)
+        await self._send(run)
 
     def action_packet(self) -> None:
         """Build and send a packet"""
@@ -654,39 +678,168 @@ class AprilaireTui(App):
 
     @work
     async def _build_packet(self) -> None:
-        """Prompt for the parts of a packet and send it"""
+        """Build a packet and send it"""
+        await self._packet_flow()
 
-        result = await self.push_screen_wait(PacketScreen())
+    async def _packet_flow(self) -> None:
+        """Choose each part of a packet in turn and send it"""
 
-        if not result:
-            return
-
-        try:
-            attribute = int(result["attribute"].strip() or "0", 0)
-        except ValueError:
-            self.session.log(ERROR, f"'{result['attribute']}' is not a valid attribute")
-            return
-
-        try:
-            packet = build_packet(
-                result["action"],
-                result["domain"],
-                attribute,
-                result["values"].split(),
+        action = await self.push_screen_wait(
+            SelectionScreen(
+                "Choose an action",
+                [(f"{member.name}  -  {int(member)}", member) for member in Action],
             )
+        )
+
+        if action is None:
+            return
+
+        functional_domain = await self.push_screen_wait(
+            SelectionScreen(
+                "Choose a functional domain",
+                [
+                    (f"{member.name}  -  {int(member)}", member)
+                    for member in FunctionalDomain
+                ],
+            )
+        )
+
+        if functional_domain is None:
+            return
+
+        attribute = await self._choose_attribute(action, functional_domain)
+
+        if attribute is None:
+            return
+
+        try:
+            packet = await self._packet_data(action, functional_domain, attribute)
         except ValueError as exc:
             self._report(exc)
+            return
+
+        if packet is None:
             return
 
         async def run() -> None:
             await self.session.send_packet(packet)
 
-        self.repeat_action = run
+        await self._send(run)
+
+    async def _choose_attribute(
+        self, action: Action, functional_domain: FunctionalDomain
+    ) -> int:
+        """Choose the attribute of a packet, from those known or by number"""
+
+        options = [
+            (self._attribute_label(action, functional_domain, attribute), attribute)
+            for attribute in known_attributes(action, functional_domain)
+        ]
+
+        if options:
+            options.append(("Another attribute...", OTHER_ATTRIBUTE))
+
+            attribute = await self.push_screen_wait(
+                SelectionScreen("Choose an attribute", options)
+            )
+
+            if attribute is not OTHER_ATTRIBUTE:
+                return attribute
+
+        result = await self.push_screen_wait(
+            FormScreen(
+                f"{action.name} {functional_domain.name}",
+                [("Attribute", "1")],
+                description=(
+                    "No attributes are known for this action and functional"
+                    " domain, so enter the number of one."
+                    if not options
+                    else "The number of the attribute to send."
+                ),
+            )
+        )
+
+        if not result:
+            return None
+
+        text = result["values"][0].strip()
 
         try:
-            await run()
-        except SessionError as exc:
-            self._report(exc)
+            return int(text, 0)
+        except ValueError:
+            self.session.log(ERROR, f"'{text}' is not a valid attribute")
+            return None
+
+    def _attribute_label(
+        self, action: Action, functional_domain: FunctionalDomain, attribute: int
+    ) -> str:
+        """Describe an attribute by the fields it carries"""
+
+        names = ", ".join(
+            mapping_field.name
+            for mapping_field in mapping_fields(action, functional_domain, attribute)
+        )
+
+        return f"{attribute}  -  {names}" if names else str(attribute)
+
+    async def _packet_data(
+        self, action: Action, functional_domain: FunctionalDomain, attribute: int
+    ):
+        """Prompt for the data of a packet and build it
+
+        Raises:
+            ValueError: the data isn't valid for the packet
+        """
+
+        title = f"{action.name} {functional_domain.name} attribute {attribute}"
+
+        # Only the actions that carry a payload have one serialized, so the
+        # rest are complete as soon as their attribute is known
+        if not has_payload(action):
+            return build_packet(action, functional_domain, attribute)
+
+        fields = mapping_fields(action, functional_domain, attribute)
+
+        if fields:
+            result = await self.push_screen_wait(
+                FormScreen(
+                    title,
+                    [
+                        (f"{mapping_field.name}: {mapping_field.type_name}", "0")
+                        for mapping_field in fields
+                    ],
+                    description="A field that is left blank is sent as zero.",
+                )
+            )
+
+            if not result:
+                return None
+
+            return build_field_packet(
+                action,
+                functional_domain,
+                attribute,
+                {
+                    mapping_field.name: result["values"][index]
+                    for index, mapping_field in enumerate(fields)
+                },
+            )
+
+        result = await self.push_screen_wait(
+            FormScreen(
+                title,
+                [("Payload as hex", "01 02 0a")],
+                description=(
+                    f"{action.name} carries a payload, and this packet has no"
+                    " known fields, so enter it as hex."
+                ),
+            )
+        )
+
+        if not result:
+            return None
+
+        return build_packet(action, functional_domain, attribute, result["values"])
 
     def action_raw(self) -> None:
         """Write raw bytes to the device"""
@@ -694,38 +847,21 @@ class AprilaireTui(App):
 
     @work
     async def _send_raw(self) -> None:
+        """Write raw bytes to the device"""
+        await self._raw_flow()
+
+    async def _raw_flow(self) -> None:
         """Prompt for raw bytes and write them to the device"""
 
-        result = await self.push_screen_wait(
-            FormScreen(
-                "Send raw bytes",
-                [("Bytes", "01 02 00 03 02 05 02 c9")],
-                description=(
-                    "The bytes are written exactly as entered, so the sequence"
-                    " number and CRC are not corrected."
-                ),
-                checkbox="Append a calculated CRC",
-            )
-        )
+        result = await self.push_screen_wait(RawScreen())
 
         if not result:
             return
 
-        try:
-            data = parse_hex_bytes(result["values"][0])
-        except ValueError as exc:
-            self._report(exc)
-            return
-
         async def run() -> None:
-            self.session.send_raw(data, append_crc=result["checked"])
+            self.session.send_raw(result["data"], append_crc=result["checked"])
 
-        self.repeat_action = run
-
-        try:
-            await run()
-        except SessionError as exc:
-            self._report(exc)
+        await self._send(run)
 
     async def action_quit(self) -> None:
         """Leave the session"""
