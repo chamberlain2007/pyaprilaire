@@ -17,7 +17,8 @@ import json
 import os
 import stat
 import sys
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from ..const import Action, FunctionalDomain
 from .commands import (
@@ -234,7 +235,7 @@ class ConsoleSession:
             await self._dispatch(command, arguments)
         except (SessionError, ValueError) as exc:
             self.session.log("error", str(exc))
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             self.session.log("error", f"{type(exc).__name__}: {exc}")
 
     async def _dispatch(self, command: str, arguments: list[str]) -> None:
@@ -305,7 +306,7 @@ class ConsoleSession:
             await self._dispatch_json(record)
         except (SessionError, ValueError) as exc:
             self.session.log("error", str(exc))
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             self.session.log("error", f"{type(exc).__name__}: {exc}")
 
     async def _dispatch_json(self, record: dict[str, Any]) -> None:

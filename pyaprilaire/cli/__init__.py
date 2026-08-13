@@ -137,7 +137,7 @@ def main(argv: list[str] = None) -> int:
 
     if use_tui:
         try:
-            from .tui import AprilaireTui  # pylint: disable=import-outside-toplevel
+            from .tui import AprilaireTui
         except ImportError:
             print(TEXTUAL_MISSING, file=sys.stderr)
             return 2

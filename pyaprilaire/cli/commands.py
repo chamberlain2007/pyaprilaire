@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import inspect
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from ..client import AprilaireClient
 from ..const import Action, FunctionalDomain
@@ -157,7 +158,7 @@ def _resolve_annotations(method: Callable) -> dict[str, Any]:
 
     try:
         return typing.get_type_hints(method)
-    except Exception:  # pylint: disable=broad-except
+    except Exception:
         # Fall back to matching the annotation text, as the modules use
         # postponed evaluation of annotations
         return {

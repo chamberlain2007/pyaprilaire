@@ -187,7 +187,7 @@ def describe_frame(frame: bytes) -> FrameDescription:
 
     try:
         description.packets = list(Packet.parse(frame))
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
         description.packets = []
 
         if description.error is None:

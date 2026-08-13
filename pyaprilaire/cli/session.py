@@ -213,7 +213,7 @@ class _DebugProtocol(_AprilaireClientProtocol):
 
         try:
             super().data_received(data)
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             self.session.log(ERROR, f"Error handling received data: {exc!r}")
 
     def connection_lost(self, exc: Exception | None) -> None:
@@ -348,7 +348,7 @@ class DebugSession:
         for listener in list(self.entry_listeners):
             try:
                 listener(entry)
-            except Exception:  # pylint: disable=broad-except
+            except Exception:
                 self.logger.exception("Entry listener failed")
 
         return entry
@@ -365,7 +365,7 @@ class DebugSession:
         for listener in list(self.state_listeners):
             try:
                 listener(self.state)
-            except Exception:  # pylint: disable=broad-except
+            except Exception:
                 self.logger.exception("State listener failed")
 
     def _describe(self, kind: str, data: bytes, frames, remainder: bytes) -> LogEntry:
@@ -497,10 +497,10 @@ class DebugSession:
 
         try:
             packet.serialize()
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:
             raise SessionError(f"Unable to build the packet: {exc}") from exc
 
-        await protocol._send_packet(packet)  # pylint: disable=protected-access
+        await protocol._send_packet(packet)
 
         return self.log(
             INFO,
@@ -525,9 +525,7 @@ class DebugSession:
             raise SessionError("No bytes to send")
 
         if append_crc:
-            data = bytes(data) + bytes(
-                [Packet._generate_crc(list(data))]  # pylint: disable=protected-access
-            )
+            data = bytes(data) + bytes([Packet._generate_crc(list(data))])
 
         entry = self.log(INFO, f"Writing {len(data)} raw byte(s)")
 
@@ -555,9 +553,8 @@ class EntryWriter:
         self.as_json = as_json
         self.detail = detail
 
-        self._file = open(
-            path, "a", encoding="utf-8"
-        )  # pylint: disable=consider-using-with
+        # The file stays open for the life of the writer
+        self._file = open(path, "a", encoding="utf-8")
 
     def __call__(self, entry: LogEntry) -> None:
         """Write a single entry"""

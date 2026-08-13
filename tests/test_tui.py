@@ -15,8 +15,6 @@ from pyaprilaire.cli.tui import (  # noqa: E402
     PacketScreen,
     SelectionScreen,
 )
-
-# pylint: disable=wrong-import-position
 from pyaprilaire.const import Action, Attribute, FunctionalDomain  # noqa: E402
 from pyaprilaire.packet import Packet  # noqa: E402
 
