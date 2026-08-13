@@ -1,5 +1,7 @@
 # Contributing
 
+> AI agents working in this repo: see [AGENTS.md](AGENTS.md) for a quick summary of these conventions.
+
 ## Commit messages and PR titles
 
 This project follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). This applies to both individual commit messages and pull request titles, and applies equally to human contributors and AI agents.
