@@ -1,11 +1,14 @@
 import asyncio
 import logging
+import runpy
+import sys
 
 import pytest
 
 from pyaprilaire import mock_server as mock_server_module
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.mock_server import CustomFormatter, _AprilaireServerProtocol
+from pyaprilaire.mock_server import __main__ as mock_server_main
 from pyaprilaire.packet import Packet
 
 
@@ -340,3 +343,75 @@ async def test_connecting_and_disconnecting(protocol, quick):
     # Let the loops notice that the connection has gone
     for _ in range(5):
         await asyncio.sleep(0)
+
+
+async def _nothing() -> None:
+    """A coroutine that does nothing, standing in for a server"""
+
+
+class FakeLoop(asyncio.AbstractEventLoop):
+    """An event loop that records what it was asked to do without doing it"""
+
+    def __init__(self, interrupt: bool = False):
+        self.servers = []
+        self.ran = False
+        self.interrupt = interrupt
+
+    def create_server(self, factory, host, port):
+        self.servers.append((factory, host, port))
+
+        return _nothing()
+
+    def create_task(self, coroutine):
+        # Nothing runs the coroutine, so it is closed rather than left to
+        # warn that it was never awaited
+        coroutine.close()
+
+    def run_forever(self):
+        self.ran = True
+
+        if self.interrupt:
+            raise KeyboardInterrupt
+
+
+@pytest.fixture
+def loop(monkeypatch):
+    """Stand in for the event loop the server would run on"""
+
+    fake_loop = FakeLoop()
+
+    monkeypatch.setattr(asyncio, "new_event_loop", lambda: fake_loop)
+    monkeypatch.setattr(asyncio, "set_event_loop", lambda loop: None)
+
+    return fake_loop
+
+
+def test_running_the_module_listens_on_the_given_port(monkeypatch, loop):
+    monkeypatch.setattr(sys, "argv", ["pyaprilaire.mock_server", "-p", "7123"])
+
+    # Running a module that has already been imported warns, so it is taken
+    # out of the way and put back afterwards
+    monkeypatch.delitem(sys.modules, "pyaprilaire.mock_server.__main__")
+
+    runpy.run_module("pyaprilaire.mock_server", run_name="__main__")
+
+    assert loop.servers == [(_AprilaireServerProtocol, "localhost", 7123)]
+    assert loop.ran
+
+
+def test_the_server_listens_on_the_default_port(monkeypatch, loop):
+    monkeypatch.setattr(sys, "argv", ["pyaprilaire.mock_server"])
+
+    mock_server_main.main()
+
+    assert loop.servers == [(_AprilaireServerProtocol, "localhost", 7001)]
+
+
+def test_the_server_stops_when_interrupted(monkeypatch, loop):
+    loop.interrupt = True
+
+    monkeypatch.setattr(sys, "argv", ["pyaprilaire.mock_server"])
+
+    mock_server_main.main()
+
+    assert loop.ran

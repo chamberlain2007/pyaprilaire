@@ -49,13 +49,6 @@ log_date_format = "%Y-%m-%d %H:%M:%S"
 asyncio_mode = "auto"
 filterwarnings = []
 
-[tool.coverage.run]
-omit = [
-    # Only the entry point of the mock server, which just parses arguments
-    # and runs a loop, is left out
-    "pyaprilaire/mock_server/__main__.py"
-]
-
 [tool.ruff]
 line-length = 88
 
