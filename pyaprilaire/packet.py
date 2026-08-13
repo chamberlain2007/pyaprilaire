@@ -206,15 +206,9 @@ MAPPING = {
                 ),
             ],
             4: [
-                (
-                    Attribute.OUTDOOR_SENSOR_STATUS,
-                    ValueType.INTEGER
-                ),
-                (
-                    Attribute.OUTDOOR_SENSOR,
-                    ValueType.TEMPERATURE
-                )
-            ]
+                (Attribute.OUTDOOR_SENSOR_STATUS, ValueType.INTEGER),
+                (Attribute.OUTDOOR_SENSOR, ValueType.TEMPERATURE),
+            ],
         },
         FunctionalDomain.STATUS: {
             2: [
@@ -344,7 +338,7 @@ class Packet:
                         attribute_index
                     ]
 
-                    (attribute_name, value_type, extra_attribute_info) = (
+                    attribute_name, value_type, extra_attribute_info = (
                         attribute_info[0],
                         attribute_info[1],
                         attribute_info[2:],
@@ -479,7 +473,7 @@ class Packet:
                 for attribute_info in MAPPING[self.action][self.functional_domain][
                     self.attribute
                 ]:
-                    (attribute_name, value_type, extra_attribute_info) = (
+                    attribute_name, value_type, extra_attribute_info = (
                         attribute_info[0],
                         attribute_info[1],
                         attribute_info[2:],
@@ -511,7 +505,7 @@ class Packet:
                     else:
                         payload.append(0)
 
-        (payload_length_high, payload_length_low) = self._encode_int_value(len(payload))
+        payload_length_high, payload_length_low = self._encode_int_value(len(payload))
         result = [1, self.sequence, payload_length_high, payload_length_low]
         result.extend(payload)
         result.append(self._generate_crc(result))

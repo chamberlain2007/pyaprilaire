@@ -9,6 +9,7 @@ import logging
 from .client import AprilaireClient
 from .const import Attribute
 
+
 class CustomFormatter(logging.Formatter):
     """Custom logging formatter"""
 
@@ -32,7 +33,8 @@ class CustomFormatter(logging.Formatter):
         log_fmt = self.FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
-    
+
+
 _LOGGER = logging.getLogger("aprilaire.mock_server")
 _LOGGER.setLevel(logging.DEBUG)
 
@@ -55,14 +57,29 @@ if __name__ == "__main__":
     def data_received_callback(new_data):
         data.update(new_data)
 
-    client = AprilaireClient(args.host, args.port, data_received_callback=data_received_callback, logger=_LOGGER)
+    client = AprilaireClient(
+        args.host,
+        args.port,
+        data_received_callback=data_received_callback,
+        logger=_LOGGER,
+    )
 
     try:
         asyncio.run(client.test_connection())
 
         if mac_address := data.get(Attribute.MAC_ADDRESS):
-            _LOGGER.info("Successfully connected to %s port %s with MAC address %s", args.host, args.port, mac_address)
+            _LOGGER.info(
+                "Successfully connected to %s port %s with MAC address %s",
+                args.host,
+                args.port,
+                mac_address,
+            )
         else:
             _LOGGER.error("Failed to connect to %s port %s", args.host, args.port)
     except Exception as e:
-        _LOGGER.error("Failed to connect to %s port %s: %s", args.host, args.port, getattr(e, 'message', repr(e)))
+        _LOGGER.error(
+            "Failed to connect to %s port %s: %s",
+            args.host,
+            args.port,
+            getattr(e, "message", repr(e)),
+        )

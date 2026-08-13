@@ -78,7 +78,7 @@ def test_protocol_data_received(protocol: _AprilaireClientProtocol):
 
     assert protocol.data_received_callback.call_count == 1
 
-    (functional_domain, attribute, data) = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
 
     assert functional_domain == FunctionalDomain.CONTROL
     assert attribute == 1
@@ -101,7 +101,7 @@ def test_protocol_data_received_error(protocol: _AprilaireClientProtocol):
 
     assert protocol.data_received_callback.call_count == 1
 
-    (functional_domain, attribute, data) = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
 
     assert functional_domain == FunctionalDomain.STATUS
     assert attribute == 8
@@ -123,7 +123,7 @@ def test_protocol_connection_lost(protocol: _AprilaireClientProtocol):
 
     assert protocol.data_received_callback.call_count == 1
 
-    (functional_domain, attribute, data) = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
 
     assert functional_domain == FunctionalDomain.NONE
     assert attribute == 0
@@ -167,7 +167,7 @@ async def test_protocol_send_packet(protocol: _AprilaireClientProtocol):
 
     assert protocol.packet_queue.put.call_count == 1
 
-    (sent_packet) = protocol.packet_queue.put.call_args[0][0]
+    sent_packet = protocol.packet_queue.put.call_args[0][0]
 
     assert original_packet == sent_packet
 
@@ -673,6 +673,7 @@ async def test_client_read_thermostat_name(
         ),
     )
 
+
 async def test_client_set_written_outdoor_temperature_value(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
@@ -684,12 +685,10 @@ async def test_client_set_written_outdoor_temperature_value(
             Action.WRITE,
             FunctionalDomain.SENSORS,
             4,
-            data={
-                Attribute.OUTDOOR_SENSOR_STATUS: 0,
-                Attribute.OUTDOOR_SENSOR: 10
-            }
-        )
+            data={Attribute.OUTDOOR_SENSOR_STATUS: 0, Attribute.OUTDOOR_SENSOR: 10},
+        ),
     )
+
 
 async def test_client_read_thermostat_iaq_available(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
@@ -697,13 +696,9 @@ async def test_client_read_thermostat_iaq_available(
     await client.read_thermostat_iaq_available()
 
     assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.READ_REQUEST,
-            FunctionalDomain.CONTROL,
-            7
-        )
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 7)
     )
+
 
 async def test_client_read_thermostat_status(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
@@ -711,13 +706,9 @@ async def test_client_read_thermostat_status(
     await client.read_thermostat_status()
 
     assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.READ_REQUEST,
-            FunctionalDomain.STATUS,
-            6
-        )
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 6)
     )
+
 
 async def test_client_read_iaq_status(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
@@ -725,13 +716,9 @@ async def test_client_read_iaq_status(
     await client.read_iaq_status()
 
     assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.READ_REQUEST,
-            FunctionalDomain.STATUS,
-            7
-        )
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 7)
     )
+
 
 async def test_client_wait_for_response_success(client: AprilaireClient):
     wait_for_mock = AsyncMock(return_value=True)
@@ -764,11 +751,14 @@ async def test_client_reconnect_with_delay(client: AprilaireClient):
         assert reconnect_mock.call_count == 1
         assert reconnect_mock.call_args[0][0] == client.retry_connection_interval
 
+
 async def test_test_connection(client: AprilaireClient):
     reconnect_once_mock = AsyncMock()
 
-    with patch("pyaprilaire.socket_client.SocketClient._reconnect_once", new=reconnect_once_mock):
+    with patch(
+        "pyaprilaire.socket_client.SocketClient._reconnect_once",
+        new=reconnect_once_mock,
+    ):
         await client.test_connection()
 
         assert reconnect_once_mock.call_count == 1
-
