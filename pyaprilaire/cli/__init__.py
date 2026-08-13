@@ -1,0 +1,208 @@
+"""Interactive session with a thermostat
+
+Connects to a device, sends commands to it and shows every message in both
+its raw form and its decoded form.
+
+    python -m pyaprilaire.cli --host 192.168.1.5
+
+It can also just report whether a device answers at all:
+
+    python -m pyaprilaire.cli --host 192.168.1.5 --test-connection
+
+Nothing here is needed to use the library. The full screen interface also
+needs Textual, which is installed with the `cli` extra:
+`pip install pyaprilaire[cli]`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import sys
+
+from .console import ConsoleSession
+from .session import DEFAULT_PORT, DebugSession, EntryWriter
+
+TEXTUAL_MISSING = (
+    "The full screen interface requires Textual, which is not installed."
+    " Install it with 'pip install pyaprilaire[cli]', or use --no-tui for the"
+    " line based interface."
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the interactive session"""
+
+    parser = argparse.ArgumentParser(
+        prog="pyaprilaire",
+        description="Interactively send commands to a thermostat and see the"
+        " messages it sends back, as both raw and decoded packets.",
+    )
+
+    parser.add_argument("-H", "--host", default="localhost", help="device host")
+    parser.add_argument(
+        "-p", "--port", type=int, default=DEFAULT_PORT, help="device port"
+    )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="use the line based interface instead of the full screen one",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="write each message as a JSON object on its own line (ndjson)."
+        " Without --output this is written to stdout, which implies --no-tui"
+        " so that stdout carries nothing else",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="also write every message to this file, as one JSON object per"
+        " line (ndjson) when --json is given and as text otherwise",
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        help="run the commands in this file, as either the text you would"
+        " type or one JSON record per line, and then continue interactively;"
+        " '-' reads them from standard input, which implies --no-tui."
+        " Commands are also read from standard input when it is piped in",
+    )
+    parser.add_argument(
+        "--test-connection",
+        action="store_true",
+        help="connect to the device, report whether it answers and exit with"
+        " a status of 0 if it did and 1 if it did not",
+    )
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="how long to stay connected after scripted commands run out, so"
+        " that the responses to them arrive (default: 2)",
+    )
+    parser.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        help="stay connected after scripted commands run out, until"
+        " interrupted, rather than waiting a fixed time",
+    )
+    parser.add_argument(
+        "--no-auto-status",
+        action="store_true",
+        help="don't send the usual startup requests when connecting, so that"
+        " only the commands you send appear",
+    )
+    parser.add_argument(
+        "--reconnect",
+        action="store_true",
+        help="keep reconnecting when the connection is lost or refused",
+    )
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help="start with hex dumps and full payloads shown",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="write client logging to stderr, which is ignored by the full"
+        " screen interface as it would corrupt the display",
+    )
+
+    return parser
+
+
+def _build_logger(verbose: bool, use_tui: bool) -> logging.Logger:
+    """Build the logger used by the client"""
+
+    logger = logging.getLogger("pyaprilaire.cli")
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    logger.propagate = False
+    logger.handlers.clear()
+
+    if verbose and not use_tui:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+    else:
+        logger.addHandler(logging.NullHandler())
+
+    return logger
+
+
+def main(argv: list[str] = None) -> int:
+    """Run an interactive session"""
+
+    args = build_parser().parse_args(argv)
+
+    # The full screen interface needs a terminal it doesn't have to share, so
+    # it gives way to anything that reads from stdin or writes to stdout.
+    # Everything else, including a captured session and a script to run
+    # first, works just as well with it as without it.
+    use_tui = not (
+        args.no_tui
+        or args.test_connection
+        or (args.json and not args.output)
+        or args.input == "-"
+        or not sys.stdin.isatty()
+    )
+
+    if use_tui:
+        try:
+            from .tui import AprilaireTui
+        except ImportError:
+            print(TEXTUAL_MISSING, file=sys.stderr)
+            return 2
+
+    session = DebugSession(
+        args.host,
+        args.port,
+        logger=_build_logger(args.verbose, use_tui),
+        auto_status=not args.no_auto_status,
+        reconnect=args.reconnect,
+    )
+
+    writer = (
+        EntryWriter(args.output, as_json=args.json, detail=args.detail)
+        if args.output
+        else None
+    )
+
+    if writer:
+        session.add_entry_listener(writer)
+
+    console = (
+        None
+        if use_tui
+        else ConsoleSession(
+            session,
+            json_output=args.json,
+            detail=args.detail,
+            input_path=args.input,
+            wait=args.wait,
+            follow=args.follow,
+        )
+    )
+
+    status = 0
+
+    try:
+        if args.test_connection:
+            status = 0 if asyncio.run(console.test_connection()) else 1
+        elif use_tui:
+            AprilaireTui(session, detail=args.detail, script_path=args.input).run()
+        else:
+            asyncio.run(console.run())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if writer:
+            writer.close()
+
+    return status
