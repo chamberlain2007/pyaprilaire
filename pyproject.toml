@@ -14,7 +14,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov"]
+dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ruff"]
 
 [tool.bumpver]
 current_version = "0.9.1"
@@ -48,5 +48,12 @@ omit = [
     "pyaprilaire/test_connection.py"
 ]
 
-[tool.isort]
-profile = "black" 
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pyaprilaire"]

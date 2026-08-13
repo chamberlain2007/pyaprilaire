@@ -6,7 +6,7 @@ from enum import Enum, IntEnum
 
 try:
     from enum import StrEnum
-except:
+except ImportError:
 
     class StrEnum(str, Enum):
         pass

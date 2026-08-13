@@ -12,6 +12,16 @@ In order to connect to the thermostat, you will need to enable automation mode. 
 
 # Development
 
+## Linting
+
+This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting. After installing the `dev` extra (`pip install -e .[dev]`), enable the pre-commit hooks with:
+
+```
+pre-commit install
+```
+
+This will automatically lint and format staged Python files on each commit. You can also run it manually against the whole repo with `pre-commit run --all-files`.
+
 ## Mock server
 
 During development, it is necessary to connect to a thermostat, but this can be problematic as a thermostat only allows a single connection at a time. There is a mock server that can be run to expose a local server for development that emulates a thermostat.
