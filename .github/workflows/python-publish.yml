@@ -34,13 +34,13 @@ jobs:
       run: python -m build
     - name: Publish package (release)
       if: "!github.event.release.prerelease"
-      uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
       with:
         user: __token__
         password: ${{ secrets.PYPI_API_TOKEN }}
     - name: Publish package (prerelease)
       if: "github.event.release.prerelease"
-      uses: pypa/gh-action-pypi-publish@27b31702a0e7fc50959f5ad993c78deac1bdfc29
+      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
       with:
         user: __token__
         password: ${{ secrets.TEST_PYPI_API_TOKEN }}
