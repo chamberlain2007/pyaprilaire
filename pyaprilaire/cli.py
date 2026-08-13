@@ -54,6 +54,30 @@ def build_parser() -> argparse.ArgumentParser:
         " given and as text otherwise",
     )
     parser.add_argument(
+        "-i",
+        "--input",
+        help="run the commands in this file, as either the text you would"
+        " type or one JSON record per line, then continue interactively if"
+        " there is a terminal; '-' reads them from standard input. Implies"
+        " --no-tui. Commands are also read from standard input when it is"
+        " piped in",
+    )
+    parser.add_argument(
+        "--wait",
+        type=float,
+        default=2.0,
+        metavar="SECONDS",
+        help="how long to stay connected after scripted commands run out, so"
+        " that the responses to them arrive (default: 2)",
+    )
+    parser.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        help="stay connected after scripted commands run out, until"
+        " interrupted, rather than waiting a fixed time",
+    )
+    parser.add_argument(
         "--no-auto-status",
         action="store_true",
         help="don't send the usual startup requests when connecting, so that"
@@ -103,8 +127,9 @@ def main(argv: list[str] = None) -> int:
 
     args = build_parser().parse_args(argv)
 
-    # JSON output owns stdout, so the full screen interface can't be used
-    use_tui = not (args.no_tui or args.json)
+    # JSON output owns stdout, and scripted commands need somewhere to be
+    # typed, so neither can use the full screen interface
+    use_tui = not (args.no_tui or args.json or args.input)
 
     if use_tui:
         try:
@@ -135,7 +160,14 @@ def main(argv: list[str] = None) -> int:
             AprilaireTui(session, detail=args.detail).run()
         else:
             asyncio.run(
-                ConsoleSession(session, json_output=args.json, detail=args.detail).run()
+                ConsoleSession(
+                    session,
+                    json_output=args.json,
+                    detail=args.detail,
+                    input_path=args.input,
+                    wait=args.wait,
+                    follow=args.follow,
+                ).run()
             )
     except KeyboardInterrupt:
         pass

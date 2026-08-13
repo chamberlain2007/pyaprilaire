@@ -42,15 +42,44 @@ Messages are shown as they arrive, and the current state of the device, built up
 | `--no-tui` | Use the line based interface instead of the full screen one, which also avoids needing Textual |
 | `--json` | Write each message as a JSON object on its own line, which implies `--no-tui` so that only JSON is written to stdout |
 | `-o`, `--output PATH` | Also write every message to a file, as JSON when `--json` is given and as text otherwise |
+| `-i`, `--input PATH` | Run the commands in a file, which also implies `--no-tui`. `-` reads them from standard input |
+| `--wait SECONDS` | How long to stay connected after scripted commands run out, so that the responses to them arrive (default: 2) |
+| `-f`, `--follow` | Stay connected after scripted commands run out, until interrupted |
 | `--no-auto-status` | Don't send the usual startup requests when connecting, so that only the commands you send appear |
 | `--reconnect` | Keep reconnecting when the connection is lost or refused |
 | `--detail` | Start with hex dumps and full payloads shown |
 
-The line based interface takes the same commands as text, and `help` lists them:
-
 ```
 python -m pyaprilaire.cli --no-tui --json --output capture.ndjson
 ```
+
+## Scripting
+
+The line based interface takes the same commands as text, and `help` lists them. Those commands can also be read from a file with `--input`, or piped in:
+
+```
+echo "update_mode 3" | python -m pyaprilaire.cli --host 192.168.1.5
+```
+
+A line starting with `{` is read as a JSON record instead, so a script can be written as ndjson:
+
+```json
+{"command": "update_setpoint", "arguments": [23.5, 19]}
+{"packet": {"action": "WRITE", "domain": "CONTROL", "attribute": 1, "data": {"mode": 3}}}
+{"raw": "01 02 00 03 02 05 02 c9", "append_crc": false}
+{"wait": 2}
+```
+
+The records written by `--json` are themselves valid input, so a captured session can be replayed against a device. What was sent is sent again, byte for byte, and what was received is ignored:
+
+```
+python -m pyaprilaire.cli --json --output capture.ndjson --input script.ndjson
+python -m pyaprilaire.cli --input capture.ndjson
+```
+
+Note that a replayed frame carries the sequence number it was captured with, as it is sent exactly as it was recorded.
+
+Responses arrive after the command that caused them, so the session stays open for `--wait` seconds once the commands run out, or until interrupted with `--follow`. A script that ends in `quit` leaves immediately instead. When there is a terminal, `--input` runs the script and then continues interactively.
 
 # Development
 
