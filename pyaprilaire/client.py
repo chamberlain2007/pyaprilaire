@@ -57,7 +57,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             for _ in range(self.packet_queue.qsize()):
                 self.packet_queue.get_nowait()
                 self.packet_queue.task_done()
-        except:  # pylint: disable=bare-except
+        except Exception:
             pass
 
     async def _queue_loop(self, loop_count=None):

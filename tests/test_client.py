@@ -175,7 +175,7 @@ async def test_protocol_send_packet(protocol: _AprilaireClientProtocol):
 def assertPacketQueueContains(protocol: _AprilaireClientProtocol, packet: Packet):
     queue_items = list(protocol.packet_queue._queue)
 
-    assert any(qp == packet for qp in queue_items) == True
+    assert any(qp == packet for qp in queue_items)
 
 
 async def test_protocol_read_sensors(protocol: _AprilaireClientProtocol):
@@ -416,12 +416,6 @@ def test_client_state_changed(
     }
 
 
-def assertPacketQueueContains(protocol: _AprilaireClientProtocol, packet: Packet):
-    queue_items = list(protocol.packet_queue._queue)
-
-    assert any(qp == packet for qp in queue_items) == True
-
-
 async def test_client_read_sensors(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
@@ -644,21 +638,6 @@ async def test_client_read_mac_address(
     )
 
 
-async def test_client_read_thermostat_status(
-    client: AprilaireClient, protocol: _AprilaireClientProtocol
-):
-    await client.read_thermostat_status()
-
-    assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.READ_REQUEST,
-            FunctionalDomain.CONTROL,
-            7,
-        ),
-    )
-
-
 async def test_client_read_thermostat_name(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
@@ -728,7 +707,7 @@ async def test_client_wait_for_response_success(client: AprilaireClient):
             FunctionalDomain.CONTROL, 1, 1
         )
 
-    assert wait_for_response_result == True
+    assert wait_for_response_result
 
 
 async def test_client_wait_for_response_timeout(client: AprilaireClient):
@@ -739,7 +718,7 @@ async def test_client_wait_for_response_timeout(client: AprilaireClient):
             FunctionalDomain.CONTROL, 1, 1
         )
 
-    assert wait_for_response_result == None
+    assert wait_for_response_result is None
 
 
 async def test_client_reconnect_with_delay(client: AprilaireClient):

@@ -18,15 +18,7 @@ cli = ["textual >= 0.60"]
 # The mock server only needs the standard library today, but its own
 # dependencies belong here rather than in the library's
 mock_server = []
-dev = [
-    "black",
-    "bumpver",
-    "isort",
-    "pip-tools",
-    "pytest-asyncio",
-    "pytest-cov",
-    "textual >= 0.60",
-]
+dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ruff", "textual >= 0.60"]
 
 [project.scripts]
 pyaprilaire = "pyaprilaire.cli:main"
@@ -63,5 +55,12 @@ omit = [
     "pyaprilaire/test_connection.py"
 ]
 
-[tool.isort]
-profile = "black" 
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pyaprilaire"]

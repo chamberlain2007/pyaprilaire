@@ -4,15 +4,14 @@
 #
 #    pip-compile --extra=dev pyproject.toml
 #
-black==23.1.0
-    # via pyaprilaire (pyproject.toml)
 build==1.5.0
     # via pip-tools
 bumpver==2026.1132
     # via pyaprilaire (pyproject.toml)
+cfgv==3.5.0
+    # via pre-commit
 click==8.4.2
     # via
-    #   black
     #   bumpver
     #   pip-tools
 colorama==0.4.6
@@ -21,10 +20,16 @@ coverage[toml]==7.15.4
     # via pytest-cov
 crc==7.1.0
     # via pyaprilaire (pyproject.toml)
+distlib==0.4.3
+    # via virtualenv
+filelock==3.32.3
+    # via
+    #   python-discovery
+    #   virtualenv
+identify==2.6.19
+    # via pre-commit
 iniconfig==2.3.0
     # via pytest
-isort==8.0.1
-    # via pyaprilaire (pyproject.toml)
 lexid==2021.1006
     # via bumpver
 linkify-it-py==2.1.0
@@ -38,23 +43,22 @@ mdit-py-plugins==0.6.1
     # via textual
 mdurl==0.1.2
     # via markdown-it-py
-mypy-extensions==1.0.0
-    # via black
+nodeenv==1.10.0
+    # via pre-commit
 packaging==26.3
     # via
-    #   black
     #   build
     #   pytest
-pathspec==1.1.1
-    # via black
 pip-tools==7.6.1
     # via pyaprilaire (pyproject.toml)
 platformdirs==4.11.2
     # via
-    #   black
     #   textual
+    #   virtualenv
 pluggy==1.6.0
     # via pytest
+pre-commit==4.6.2
+    # via pyaprilaire (pyproject.toml)
 pygments==2.20.0
     # via
     #   pytest
@@ -72,8 +76,14 @@ pytest-asyncio==1.4.0
     # via pyaprilaire (pyproject.toml)
 pytest-cov==4.0.0
     # via pyaprilaire (pyproject.toml)
+python-discovery==1.5.2
+    # via virtualenv
+pyyaml==6.0.3
+    # via pre-commit
 rich==15.0.0
     # via textual
+ruff==0.16.3
+    # via pyaprilaire (pyproject.toml)
 textual==8.2.8
     # via pyaprilaire (pyproject.toml)
 toml==0.10.2
@@ -82,6 +92,8 @@ typing-extensions==4.16.0
     # via textual
 uc-micro-py==2.0.0
     # via linkify-it-py
+virtualenv==21.7.4
+    # via pre-commit
 wheel==0.38.4
     # via pip-tools
 

@@ -107,9 +107,12 @@ async def test_auto_reconnect_loop_cancelled(client: SocketClient):
 
     wait_for_mock = AsyncMock(side_effect=asyncio.exceptions.CancelledError)
 
-    with patch(
-        "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
-    ), patch("asyncio.wait_for", new=wait_for_mock):
+    with (
+        patch(
+            "pyaprilaire.socket_client.SocketClient._reconnect", new=_reconnect_nowait
+        ),
+        patch("asyncio.wait_for", new=wait_for_mock),
+    ):
         await client.start_listen()
         await client._auto_reconnect_loop()
 
