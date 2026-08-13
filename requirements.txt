@@ -6,7 +6,7 @@
 #
 black==23.1.0
     # via pyaprilaire (pyproject.toml)
-build==0.10.0
+build==1.5.0
     # via pip-tools
 bumpver==2022.1120
     # via pyaprilaire (pyproject.toml)
