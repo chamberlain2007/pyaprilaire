@@ -19,7 +19,7 @@ colorama==0.4.6
     # via bumpver
 coverage[toml]==7.2.2
     # via pytest-cov
-crc==4.1.0
+crc==7.1.0
     # via pyaprilaire (pyproject.toml)
 exceptiongroup==1.1.1
     # via pytest
