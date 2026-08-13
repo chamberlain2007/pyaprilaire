@@ -22,6 +22,10 @@ pre-commit install
 
 This will automatically lint and format staged Python files on each commit. You can also run it manually against the whole repo with `pre-commit run --all-files`.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for commit message and pull request conventions, including [Conventional Commits](https://www.conventionalcommits.org/).
+
 ## Mock server
 
 During development, it is necessary to connect to a thermostat, but this can be problematic as a thermostat only allows a single connection at a time. There is a mock server that can be run to expose a local server for development that emulates a thermostat.
