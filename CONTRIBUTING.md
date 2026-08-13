@@ -38,6 +38,8 @@ docs: document automation mode prerequisite
 
 Commit messages are checked locally via the `conventional-pre-commit` hook (see below), and PR titles are checked in CI.
 
+Release PRs (`release/X.Y.Z` branches targeting `main`, titled `release: X.Y.Z`) are exempt from PR title linting, since `release` isn't a Conventional Commits type.
+
 ## Pull requests
 
 Every pull request should use the [pull request template](.github/pull_request_template.md), which is applied automatically when opening a PR. Fill in each section rather than deleting it.
