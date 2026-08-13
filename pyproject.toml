@@ -14,7 +14,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["bumpver", "pip-tools", "pytest-asyncio", "pytest-cov", "ruff"]
+dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ruff"]
 
 [tool.bumpver]
 current_version = "0.9.1"
