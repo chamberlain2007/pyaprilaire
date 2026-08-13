@@ -21,7 +21,7 @@ def test_unmapped():
 
 
 def test_packet_empty_parse():
-    packets = list(Packet.parse(bytes()))
+    packets = list(Packet.parse(b""))
 
     assert len(packets) == 0
 
@@ -310,7 +310,7 @@ def test_decode_humidity_nonzero():
 def test_decode_humidity_negative():
     humidity = Packet._decode_humidity(-50)
 
-    assert humidity == None
+    assert humidity is None
 
 
 def test_encode_temperature():
@@ -349,18 +349,6 @@ def test_serialize_raw():
     ).serialize()
 
     assert serialized == bytes([1, 1, 0, 6, 2, 2, 1, 1, 2, 3, 133])
-
-
-def test_serialize_single_packet_no_data():
-    serialized = Packet(
-        Action.READ_REQUEST,
-        FunctionalDomain.CONTROL,
-        1,
-        1,
-        1,
-    ).serialize()
-
-    assert serialized == bytes([1, 1, 0, 3, 2, 2, 1, 70])
 
 
 def test_serialize_single_packet_no_data():

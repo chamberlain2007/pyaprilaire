@@ -4,15 +4,14 @@
 #
 #    pip-compile --extra=dev pyproject.toml
 #
-black==23.1.0
-    # via pyaprilaire (pyproject.toml)
+backports-asyncio-runner==1.2.0
+    # via pytest-asyncio
 build==1.5.0
     # via pip-tools
 bumpver==2026.1132
     # via pyaprilaire (pyproject.toml)
 click==8.4.2
     # via
-    #   black
     #   bumpver
     #   pip-tools
 colorama==0.4.6
@@ -25,23 +24,14 @@ exceptiongroup==1.3.1
     # via pytest
 iniconfig==2.3.0
     # via pytest
-isort==8.0.1
-    # via pyaprilaire (pyproject.toml)
 lexid==2021.1006
     # via bumpver
-mypy-extensions==1.0.0
-    # via black
 packaging==26.3
     # via
-    #   black
     #   build
     #   pytest
-pathspec==1.1.1
-    # via black
 pip-tools==7.6.1
     # via pyaprilaire (pyproject.toml)
-platformdirs==3.0.0
-    # via black
 pluggy==1.6.0
     # via pytest
 pygments==2.20.0
@@ -58,11 +48,12 @@ pytest-asyncio==1.4.0
     # via pyaprilaire (pyproject.toml)
 pytest-cov==4.0.0
     # via pyaprilaire (pyproject.toml)
+ruff==0.16.3
+    # via pyaprilaire (pyproject.toml)
 toml==0.10.2
     # via bumpver
-tomli==2.0.1
+tomli==2.4.1
     # via
-    #   black
     #   build
     #   coverage
     #   pip-tools
@@ -72,6 +63,7 @@ typing-extensions==4.16.0
     # via
     #   exceptiongroup
     #   pip-tools
+    #   pytest-asyncio
 wheel==0.38.4
     # via pip-tools
 

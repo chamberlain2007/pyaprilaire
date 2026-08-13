@@ -297,7 +297,7 @@ class Packet:
             try:
                 action = Action(action)
                 functional_domain = FunctionalDomain(functional_domain)
-            except:
+            except ValueError:
                 data_index += count + 5
                 continue
 
