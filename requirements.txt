@@ -36,11 +36,9 @@ packaging==26.3
     #   black
     #   build
     #   pytest
-pathlib2==2.3.7.post1
-    # via bumpver
 pathspec==1.1.1
     # via black
-pip-tools==6.12.2
+pip-tools==7.6.1
     # via pyaprilaire (pyproject.toml)
 platformdirs==3.0.0
     # via black
@@ -49,7 +47,9 @@ pluggy==1.6.0
 pygments==2.20.0
     # via pytest
 pyproject-hooks==1.0.0
-    # via build
+    # via
+    #   build
+    #   pip-tools
 pytest==9.1.1
     # via
     #   pytest-asyncio
@@ -58,8 +58,6 @@ pytest-asyncio==0.21.0
     # via pyaprilaire (pyproject.toml)
 pytest-cov==4.0.0
     # via pyaprilaire (pyproject.toml)
-six==1.17.0
-    # via pathlib2
 toml==0.10.2
     # via bumpver
 tomli==2.0.1
@@ -67,8 +65,13 @@ tomli==2.0.1
     #   black
     #   build
     #   coverage
+    #   pip-tools
     #   pyproject-hooks
     #   pytest
+typing-extensions==4.16.0
+    # via
+    #   exceptiongroup
+    #   pip-tools
 wheel==0.38.4
     # via pip-tools
 
