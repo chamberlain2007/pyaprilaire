@@ -1,10 +1,11 @@
 import asyncio
 import json
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from pyaprilaire.commands import find_command
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import Packet
 from pyaprilaire.session import (
@@ -427,3 +428,101 @@ async def test_a_failed_connection_is_not_left_connecting(session):
 
     assert not session.connected
     assert session.status_text == "disconnected"
+
+
+def test_entry_to_json_with_an_incomplete_frame(session):
+    data = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+
+    result = json.loads(session.record_received(data[:4]).to_json())
+
+    assert result["remainder"] == data[:4].hex(" ")
+
+
+def test_format_entry_lines_with_an_incomplete_frame(session):
+    data = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+
+    lines = format_entry_lines(session.record_received(data[:4]))
+
+    assert lines[-1].strip() == f"incomplete frame: {data[:4].hex(' ')}"
+
+
+def test_format_entry_lines_shows_a_frame_error(session):
+    # A length that can't be trusted is surfaced rather than dropped
+    lines = format_entry_lines(session.record_sent(b"\x01\x02\xff\xff\x01\x02"))
+
+    assert any("Length mismatch" in line for line in lines)
+
+
+def test_format_entry_lines_shows_the_payload_with_detail(session):
+    data = Packet(
+        Action.READ_RESPONSE,
+        FunctionalDomain.SCHEDULING,
+        4,
+        data={Attribute.HOLD: 1},
+    ).serialize()
+
+    lines = format_entry_lines(session.record_received(data), detail=True)
+
+    assert any("hold = 1" in line for line in lines)
+    assert any(line.strip().startswith("payload: 01 00") for line in lines)
+    assert any(line.strip().startswith("payload (decimal): 1 0") for line in lines)
+
+
+async def test_auto_status_sends_the_startup_requests(session, transport):
+    protocol = session.client.create_protocol()
+    protocol.auto_status = True
+
+    with patch("asyncio.sleep", new=AsyncMock()):
+        await protocol._update_status()
+
+    assert protocol.packet_queue.qsize() == 9
+
+
+def test_state_listener_failure_is_contained(session):
+    def failing_listener(state):
+        raise RuntimeError("listener failed")
+
+    states = []
+
+    session.add_state_listener(failing_listener)
+    session.add_state_listener(states.append)
+
+    session._data_received({Attribute.MODE: 3})
+
+    assert session.state == {"mode": 3}
+    assert states == [session.state]
+
+
+async def test_connect_with_reconnect(logger):
+    session = DebugSession("localhost", 7001, logger=logger, reconnect=True)
+
+    session.client.start_listen = AsyncMock()
+
+    await session.connect()
+
+    session.client.start_listen.assert_awaited_once()
+    assert session.entries[-1].message == "Connected"
+
+
+async def test_close_disconnects(session, transport):
+    await session.close()
+
+    assert session.stopping
+    assert session.client.stopped
+    assert transport.closed
+
+
+async def test_close_when_not_connected(session):
+    await session.close()
+
+    assert session.stopping
+
+
+async def test_run_command_with_a_command_object(session, transport):
+    command = find_command("read_control", session.commands)
+
+    await session.run_command(command)
+
+    assert session.client.protocol.packet_queue.get_nowait() == Packet(
+        Action.READ_REQUEST, FunctionalDomain.CONTROL, 1
+    )

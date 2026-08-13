@@ -1,5 +1,8 @@
+import asyncio
 import json
 import logging
+import os
+import runpy
 import sys
 from unittest.mock import AsyncMock, Mock
 
@@ -538,3 +541,259 @@ async def test_following_stays_until_stopped(console, monkeypatch):
     await console._linger()
 
     assert not console.running
+
+
+def test_verbose_logging_goes_to_stderr():
+    logger = cli._build_logger(verbose=True, use_tui=False)
+
+    assert any(
+        isinstance(handler, logging.StreamHandler) and handler.stream is sys.stderr
+        for handler in logger.handlers
+    )
+
+
+def test_verbose_logging_is_suppressed_by_the_tui():
+    logger = cli._build_logger(verbose=True, use_tui=True)
+
+    assert all(isinstance(handler, logging.NullHandler) for handler in logger.handlers)
+
+
+def test_main_runs_the_tui(monkeypatch):
+    pytest.importorskip("textual", reason="the TUI requires the cli extra")
+
+    app = Mock()
+
+    monkeypatch.setattr("pyaprilaire.tui.AprilaireTui", Mock(return_value=app))
+
+    assert cli.main([]) == 0
+
+    app.run.assert_called_once()
+
+
+def test_main_handles_an_interrupt(monkeypatch):
+    def interrupt(coroutine):
+        coroutine.close()
+
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "ConsoleSession", Mock())
+    monkeypatch.setattr(cli.asyncio, "run", interrupt)
+
+    assert cli.main(["--no-tui"]) == 0
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_module_entry_point(monkeypatch):
+    console = Mock()
+    console.run = AsyncMock()
+
+    monkeypatch.setattr(
+        "pyaprilaire.console.ConsoleSession", Mock(return_value=console)
+    )
+    monkeypatch.setattr(cli.asyncio, "run", lambda coroutine: coroutine.close())
+    monkeypatch.setattr(sys, "argv", ["pyaprilaire", "--no-tui"])
+
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_module("pyaprilaire.cli", run_name="__main__")
+
+    assert exit_info.value.code == 0
+
+
+def prepared_input(text: str) -> asyncio.StreamReader:
+    """A reader holding input that has already arrived"""
+
+    reader = asyncio.StreamReader()
+    reader.feed_data(text.encode())
+    reader.feed_eof()
+
+    return reader
+
+
+@pytest.fixture
+def at_a_terminal(monkeypatch):
+    """Pretend that standard input is a terminal"""
+
+    monkeypatch.setattr(sys, "stdin", Mock(isatty=Mock(return_value=True)))
+
+
+@pytest.fixture
+def piped_input(monkeypatch):
+    """Pretend that standard input is piped in rather than a terminal"""
+
+    monkeypatch.setattr(sys, "stdin", Mock(isatty=Mock(return_value=False)))
+    monkeypatch.setattr(console_module, "_stdin_is_a_file", lambda: False)
+
+
+def prepare_stdin(monkeypatch, text: str) -> None:
+    """Make the next read of standard input return the given text"""
+
+    async def reader():
+        return prepared_input(text)
+
+    monkeypatch.setattr(console_module, "_stdin_reader", reader)
+
+
+async def test_run_at_a_terminal(console, session, monkeypatch, capsys, at_a_terminal):
+    session.connect = AsyncMock()
+    console._linger = AsyncMock()
+
+    prepare_stdin(monkeypatch, "read_control\n")
+
+    await console.run()
+
+    session.connect.assert_awaited_once()
+    assert session.run_command.await_count == 1
+
+    # A terminal gets the help, and isn't kept open afterwards
+    assert "Commands:" in capsys.readouterr().out
+    assert console._linger.await_count == 0
+
+
+async def test_run_with_piped_input(console, session, monkeypatch, piped_input):
+    session.connect = AsyncMock()
+    console._linger = AsyncMock()
+
+    prepare_stdin(monkeypatch, "read_control\n")
+
+    await console.run()
+
+    assert session.run_command.await_count == 1
+
+    # Piped commands are followed by a wait, so their responses arrive
+    console._linger.assert_awaited_once()
+
+
+async def test_run_with_an_input_file(
+    console, session, monkeypatch, tmp_path, piped_input
+):
+    path = tmp_path / "script.txt"
+    path.write_text("read_control\n")
+
+    console.input_path = str(path)
+    session.connect = AsyncMock()
+    console._linger = AsyncMock()
+
+    await console.run()
+
+    assert session.run_command.await_count == 1
+    console._linger.assert_awaited_once()
+
+
+async def test_run_reports_a_failed_connection(
+    console, session, monkeypatch, piped_input
+):
+    session.connect = AsyncMock(side_effect=OSError("refused"))
+
+    prepare_stdin(monkeypatch, "")
+    console.wait = 0
+
+    await console.run()
+
+    assert any(
+        "Unable to connect: refused" in entry.message for entry in session.entries
+    )
+
+
+async def test_run_does_not_wait_after_quit(console, session, monkeypatch, piped_input):
+    session.connect = AsyncMock()
+    console._linger = AsyncMock()
+
+    prepare_stdin(monkeypatch, "quit\n")
+
+    await console.run()
+
+    assert console._linger.await_count == 0
+
+
+async def test_input_path_of_a_dash_reads_stdin(console, monkeypatch):
+    console._run_stdin = AsyncMock()
+
+    await console._run_input_path("-")
+
+    console._run_stdin.assert_awaited_once()
+
+
+async def test_running_piped_stdin(console, session, monkeypatch, piped_input):
+    prepare_stdin(monkeypatch, "read_control\n")
+
+    await console._run_stdin()
+
+    assert session.run_command.await_count == 1
+
+
+async def test_connect_command(console, session):
+    session.connect = AsyncMock()
+
+    await console.handle("connect")
+
+    session.connect.assert_awaited_once()
+
+
+async def test_disconnect_command(console, session):
+    session.disconnect = Mock()
+
+    await console.handle("disconnect")
+
+    session.disconnect.assert_called_once()
+
+
+async def test_send_without_a_function(console, session):
+    await console.handle("send")
+
+    assert "Usage: send" in session.entries[-1].message
+
+
+async def test_an_unexpected_failure_is_reported(console, session):
+    session.run_command = AsyncMock(side_effect=RuntimeError("boom"))
+
+    await console.handle("read_control")
+
+    assert session.entries[-1].message == "RuntimeError: boom"
+
+
+async def test_an_unexpected_failure_in_a_record_is_reported(console, session):
+    session.run_command = AsyncMock(side_effect=RuntimeError("boom"))
+
+    await console.handle('{"command": "read_control"}')
+
+    assert session.entries[-1].message == "RuntimeError: boom"
+
+
+async def test_a_json_array_is_reported(console, session):
+    await console.handle("[1, 2]")
+
+    assert session.entries[-1].message == "A JSON record must be an object"
+
+
+async def test_a_packet_record_must_be_an_object(console, session):
+    await console.handle('{"packet": 5}')
+
+    assert "'packet' must be an object" in session.entries[-1].message
+
+
+async def test_a_packet_record_rejects_a_bad_attribute(console, session):
+    await console.handle(
+        '{"packet": {"action": "WRITE", "domain": "CONTROL", "attribute": "x"}}'
+    )
+
+    assert "not a valid attribute" in session.entries[-1].message
+
+
+def test_stdin_is_a_file_handles_a_missing_descriptor(monkeypatch):
+    monkeypatch.setattr(sys, "stdin", Mock(fileno=Mock(side_effect=ValueError)))
+
+    assert not console_module._stdin_is_a_file()
+
+
+async def test_stdin_reader_reads_a_pipe(monkeypatch):
+    read_descriptor, write_descriptor = os.pipe()
+
+    os.write(write_descriptor, b"read_control\n")
+    os.close(write_descriptor)
+
+    with os.fdopen(read_descriptor) as pipe:
+        monkeypatch.setattr(sys, "stdin", pipe)
+
+        reader = await console_module._stdin_reader()
+
+        assert await reader.readline() == b"read_control\n"

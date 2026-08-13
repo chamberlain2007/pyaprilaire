@@ -225,3 +225,27 @@ def test_hexdump():
 def test_attribute_name():
     assert attribute_name(Attribute.MODE) == "mode"
     assert attribute_name("mode") == "mode"
+
+
+def test_describe_frame_that_cannot_be_decoded():
+    # The header claims an empty body, so there is nothing for the packet
+    # parser to read
+    frame = bytes([1, 1, 0, 0, 0])
+
+    description = describe_frame(frame)
+
+    assert description.count == 0
+    assert description.action is None
+    assert description.packets == []
+    assert description.error.startswith("Unable to decode packet:")
+
+
+def test_describe_frame_nack_without_an_attribute():
+    frame = bytearray([1, 1, 0, 1, int(Action.NACK)])
+    frame.append(Packet._generate_crc(list(frame)))
+
+    description = describe_frame(bytes(frame))
+
+    assert description.crc_valid
+    assert description.nack_attribute is None
+    assert description.summary == "NACK attribute None"

@@ -223,6 +223,13 @@ class PacketScreen(ModalScreen[Any]):
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
+    def __init__(self) -> None:
+        super().__init__()
+
+        # The description of the currently selected packet, kept so that it
+        # can be shown and checked without reading it back out of the widget
+        self.hint = ""
+
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label("Send a packet", id="dialog-title")
@@ -273,18 +280,15 @@ class PacketScreen(ModalScreen[Any]):
             attribute = None
 
         if attribute is None:
-            self.query_one("#fields-hint", Static).update(
-                "Enter an attribute to see its known fields"
-            )
-            return
-
-        self.query_one("#fields-hint", Static).update(
-            describe_packet_fields(
+            self.hint = "Enter an attribute to see its known fields"
+        else:
+            self.hint = describe_packet_fields(
                 self.query_one("#action", Select).value,
                 self.query_one("#domain", Select).value,
                 attribute,
             )
-        )
+
+        self.query_one("#fields-hint", Static).update(self.hint)
 
     def on_select_changed(self) -> None:
         """Update the hint when the action or domain changes"""
@@ -549,10 +553,14 @@ class AprilaireTui(App):
         """Show what the tool can do"""
         self.push_screen(HelpScreen())
 
+    def _log_path(self) -> str:
+        """Where to write the log to"""
+        return f"aprilaire-{datetime.now():%Y%m%d-%H%M%S}.log"
+
     def action_write_log(self) -> None:
         """Write the log to a file"""
 
-        path = f"aprilaire-{datetime.now():%Y%m%d-%H%M%S}.log"
+        path = self._log_path()
 
         try:
             with open(path, "w", encoding="utf-8") as log_file:

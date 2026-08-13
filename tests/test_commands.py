@@ -1,6 +1,9 @@
 import pytest
 
+from pyaprilaire import commands as commands_module
 from pyaprilaire.commands import (
+    CommandParameter,
+    MappingField,
     build_packet,
     describe_packet_fields,
     discover_client_commands,
@@ -13,6 +16,7 @@ from pyaprilaire.commands import (
     parse_hex_bytes,
 )
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
+from pyaprilaire.packet import ValueType
 
 
 @pytest.fixture
@@ -238,3 +242,88 @@ def test_describe_packet_fields_without_payload():
     )
 
     assert "READ_REQUEST has no payload" in description
+
+
+def test_parameter_display_with_a_default():
+    parameter = CommandParameter("mode", int, default=3)
+
+    assert not parameter.required
+    assert parameter.display == "mode: int = 3"
+    assert parameter.parse("") == 3
+
+
+def test_parameter_without_an_annotation():
+    parameter = CommandParameter("name")
+
+    assert parameter.type_name == "any"
+    assert parameter.parse("anything") == "anything"
+
+
+def test_parameter_parses_a_boolean():
+    parameter = CommandParameter("enabled", bool)
+
+    assert parameter.parse("yes") is True
+    assert parameter.parse("off") is False
+
+    with pytest.raises(ValueError, match="must be true or false"):
+        parameter.parse("maybe")
+
+
+def test_parameter_rejects_a_bad_number():
+    parameter = CommandParameter("setpoint", float)
+
+    with pytest.raises(ValueError, match="setpoint must be a number"):
+        parameter.parse("warm")
+
+
+def test_annotations_fall_back_to_matching_the_text(monkeypatch):
+    def fail(method):
+        raise NameError("annotations can't be resolved")
+
+    monkeypatch.setattr(commands_module.typing, "get_type_hints", fail)
+
+    command = find_command("update_mode", discover_client_commands())
+
+    assert command.parameters[0].annotation is int
+
+
+def test_mapping_field_parses_text():
+    field = MappingField("name", ValueType.TEXT)
+
+    assert field.parse(" Living Room ") == "Living Room"
+    assert field.parse("") == ""
+
+
+def test_mapping_field_parses_a_mac_address():
+    field = MappingField("mac_address", ValueType.MAC_ADDRESS)
+
+    assert field.parse("01 02 03 04 05 06") == [1, 2, 3, 4, 5, 6]
+
+
+def test_mapping_field_parses_a_temperature():
+    field = MappingField("heat_setpoint", ValueType.TEMPERATURE)
+
+    assert field.parse("21.5") == 21.5
+
+    with pytest.raises(ValueError, match="heat_setpoint must be a number"):
+        field.parse("warm")
+
+
+def test_mapping_field_rejects_a_bad_integer():
+    field = MappingField("mode", ValueType.INTEGER)
+
+    assert field.parse("") == 0
+
+    with pytest.raises(ValueError, match="mode must be an integer"):
+        field.parse("cool")
+
+
+def test_parse_hex_bytes_rejects_an_empty_token():
+    with pytest.raises(ValueError, match="No bytes were provided"):
+        parse_hex_bytes("0x")
+
+
+def test_describe_packet_fields_for_an_unknown_domain():
+    description = describe_packet_fields(Action.WRITE, FunctionalDomain.ALERTS, 1)
+
+    assert description == "No known fields, enter the payload as hex."

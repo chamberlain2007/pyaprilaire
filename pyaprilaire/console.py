@@ -220,7 +220,7 @@ class ConsoleSession:
         if not line or line.startswith("#"):
             return
 
-        if line.startswith("{"):
+        if line.startswith(("{", "[")):
             await self._handle_json(line, echo)
             return
 
