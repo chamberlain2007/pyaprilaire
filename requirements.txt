@@ -38,7 +38,7 @@ packaging==23.0
     #   pytest
 pathlib2==2.3.7.post1
     # via bumpver
-pathspec==0.11.0
+pathspec==1.1.1
     # via black
 pip-tools==6.12.2
     # via pyaprilaire (pyproject.toml)
