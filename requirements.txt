@@ -44,7 +44,9 @@ pip-tools==6.12.2
     # via pyaprilaire (pyproject.toml)
 platformdirs==3.0.0
     # via black
-pluggy==1.0.0
+pluggy==1.6.0
+    # via pytest
+pygments==2.20.0
     # via pytest
 pyproject-hooks==1.0.0
     # via build
@@ -65,6 +67,7 @@ tomli==2.0.1
     #   black
     #   build
     #   coverage
+    #   pyproject-hooks
     #   pytest
 wheel==0.38.4
     # via pip-tools
