@@ -1,13 +1,17 @@
-"""Mock server for testing Aprilaire integration"""
+"""Mock server for testing Aprilaire integration
+
+Run it with `python -m pyaprilaire.mock_server`. It is not needed to use
+the library, and its dependencies are installed with the `mock_server`
+extra: `pip install pyaprilaire[mock_server]`.
+"""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import logging
 
-from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
-from .packet import Packet
+from ..const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
+from ..packet import Packet
 
 COS_FREQUENCY = 30
 
@@ -673,23 +677,3 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
         self.transport = None
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-H", "--host", default="localhost")
-    parser.add_argument("-p", "--port", default=7001)
-
-    args = parser.parse_args()
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.create_task(loop.create_server(_AprilaireServerProtocol, args.host, args.port))
-
-    _LOGGER.info("Server listening on %s port %d", args.host, args.port)
-
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass

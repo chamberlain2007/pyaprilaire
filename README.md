@@ -88,8 +88,11 @@ Responses arrive after the command that caused them, so the session stays open f
 During development, it is necessary to connect to a thermostat, but this can be problematic as a thermostat only allows a single connection at a time. There is a mock server that can be run to expose a local server for development that emulates a thermostat.
 
 ```
+pip install pyaprilaire[mock_server]
 python -m pyaprilaire.mock_server
 ```
+
+The mock server is a subpackage of its own so that anything it needs stays out of the library's dependencies. It only uses the standard library today, so the extra installs nothing beyond the library itself.
 
 The port can be specified with `-p PORT_NUMBER`. The default port is 7001.
 
