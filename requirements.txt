@@ -60,7 +60,7 @@ six==1.16.0
     # via pathlib2
 toml==0.10.2
     # via bumpver
-tomli==2.0.1
+tomli==2.4.1
     # via
     #   black
     #   build
