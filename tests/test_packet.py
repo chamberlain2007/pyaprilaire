@@ -1,5 +1,5 @@
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
-from pyaprilaire.packet import NackPacket, Packet
+from pyaprilaire.packet import NackPacket, Packet, attribute_name, split_packets
 
 
 def test_invalid_action():
@@ -477,3 +477,267 @@ def test_identification_4_serialize():
             180,
         ]
     )
+
+
+def build_packet_bytes(
+    action: Action,
+    functional_domain: FunctionalDomain,
+    attribute: int,
+    payload: list[int] = None,
+    sequence: int = 1,
+) -> bytes:
+    """Build a packet with a valid checksum, bypassing the mapping"""
+
+    body = [int(action), int(functional_domain), attribute] + (payload or [])
+
+    raw = [1, sequence, len(body) >> 8, len(body) & 0xFF] + body
+    raw.append(Packet._generate_crc(raw))
+
+    return bytes(raw)
+
+
+def test_split_packets_single():
+    raw = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+
+    packets, remainder = split_packets(raw)
+
+    assert packets == [raw]
+    assert remainder == b""
+
+
+def test_split_packets_multiple():
+    first = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+    second = Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2).serialize()
+
+    packets, remainder = split_packets(first + second)
+
+    assert packets == [first, second]
+    assert remainder == b""
+
+
+def test_split_packets_partial():
+    raw = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+
+    packets, remainder = split_packets(raw[:-2])
+
+    assert packets == []
+    assert remainder == raw[:-2]
+
+
+def test_split_packets_partial_header():
+    packets, remainder = split_packets(b"\x01\x02")
+
+    assert packets == []
+    assert remainder == b"\x01\x02"
+
+
+def test_split_packets_completed_by_later_data():
+    raw = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+
+    _, remainder = split_packets(raw[:3])
+
+    packets, remainder = split_packets(remainder + raw[3:])
+
+    assert packets == [raw]
+    assert remainder == b""
+
+
+def test_split_packets_bogus_length():
+    data = b"\x01\x02\xff\xff\x01\x02"
+
+    packets, remainder = split_packets(data)
+
+    assert packets == [data]
+    assert remainder == b""
+
+
+def parse_one(data: bytes) -> Packet:
+    """Parse a single packet, including one that can't be acted on"""
+
+    packets = list(Packet.parse(data, strict=False))
+
+    assert len(packets) == 1
+
+    return packets[0]
+
+
+def test_parse_describes_a_packet():
+    raw = Packet(
+        Action.READ_RESPONSE,
+        FunctionalDomain.CONTROL,
+        1,
+        data={
+            Attribute.MODE: 3,
+            Attribute.FAN_MODE: 2,
+            Attribute.HEAT_SETPOINT: 20,
+            Attribute.COOL_SETPOINT: 25,
+        },
+    ).serialize()
+
+    packet = parse_one(raw)
+
+    assert packet.raw == raw
+    assert packet.revision == 1
+    assert packet.count == 7
+    assert packet.action == Action.READ_RESPONSE
+    assert packet.action_name == "READ_RESPONSE"
+    assert packet.functional_domain == FunctionalDomain.CONTROL
+    assert packet.functional_domain_name == "CONTROL"
+    assert packet.attribute == 1
+    assert packet.crc_valid
+    assert packet.error is None
+    assert packet.payload == bytes([3, 2, 20, 25])
+    assert packet.summary == "READ_RESPONSE CONTROL attribute 1"
+    assert dict(packet.decoded) == {
+        "mode": 3,
+        "fan_mode": 2,
+        "heat_setpoint": 20,
+        "cool_setpoint": 25,
+    }
+
+
+def test_parse_describes_a_packet_without_a_payload():
+    packet = parse_one(
+        Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2).serialize()
+    )
+
+    assert packet.payload == b""
+    assert packet.decoded == []
+    assert packet.crc_valid
+
+
+def test_parse_describes_a_nack():
+    packet = parse_one(NackPacket(7).serialize())
+
+    assert packet.action == Action.NACK
+    assert packet.nack_attribute == 7
+    assert packet.summary == "NACK attribute 7"
+    assert packet.decoded == [("nack_attribute", 7)]
+
+
+def test_parse_describes_an_invalid_checksum():
+    raw = bytearray(
+        Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+    )
+    raw[-1] ^= 0xFF
+
+    packet = parse_one(bytes(raw))
+
+    assert not packet.crc_valid
+    # A packet that fails its checksum is still described, just not acted on
+    assert packet.action == Action.READ_REQUEST
+    assert list(Packet.parse(bytes(raw))) == []
+
+
+def test_parse_describes_an_unknown_attribute():
+    raw = build_packet_bytes(
+        Action.READ_RESPONSE, FunctionalDomain.CONTROL, 99, [1, 2, 3]
+    )
+
+    packet = parse_one(raw)
+
+    assert packet.crc_valid
+    assert packet.attribute == 99
+    assert packet.payload == bytes([1, 2, 3])
+    assert packet.raw_data == [1, 2, 3]
+    assert packet.decoded == []
+    assert packet.summary == "READ_RESPONSE CONTROL attribute 99"
+
+
+def test_parse_describes_an_unknown_action():
+    packet = parse_one(build_packet_bytes(99, 88, 1, [1]))
+
+    assert packet.action_name == "UNKNOWN(99)"
+    assert packet.functional_domain_name == "UNKNOWN(88)"
+    assert packet.summary == "UNKNOWN(99) UNKNOWN(88) attribute 1"
+    assert packet.payload == bytes([1])
+
+
+def test_parse_describes_bytes_that_are_too_short():
+    packet = parse_one(b"\x01\x02")
+
+    assert packet.error == "Packet is too short to contain a header and a checksum"
+    assert packet.action is None
+    assert packet.summary == "empty packet"
+
+
+def test_parse_describes_a_length_mismatch():
+    raw = bytearray(
+        Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+    )
+    raw[3] = 9
+
+    packet = parse_one(bytes(raw))
+
+    assert "Length mismatch" in packet.error
+
+
+def test_parse_describes_a_packet_with_no_action():
+    packet = parse_one(bytes([1, 1, 0, 0, 0]))
+
+    assert packet.count == 0
+    assert packet.action is None
+    assert packet.error == "Packet has no action"
+    assert packet.summary == "empty packet"
+
+
+def test_parse_describes_a_nack_without_an_attribute():
+    raw = bytearray([1, 1, 0, 1, int(Action.NACK)])
+    raw.append(Packet._generate_crc(list(raw)))
+
+    packet = parse_one(bytes(raw))
+
+    assert packet.crc_valid
+    assert packet.nack_attribute is None
+    assert packet.summary == "NACK attribute None"
+
+
+def test_parse_describes_a_truncated_payload():
+    raw = bytearray(
+        Packet(
+            Action.READ_RESPONSE,
+            FunctionalDomain.IDENTIFICATION,
+            2,
+            data={Attribute.MAC_ADDRESS: [1, 2, 3, 4, 5, 6]},
+        ).serialize()
+    )
+
+    packet = parse_one(bytes(raw[:-3]))
+
+    assert (
+        packet.error == "Length mismatch: header declares 9 byte(s), packet contains 6"
+    )
+    # Nothing can be done with it, so it is not returned to the client
+    assert list(Packet.parse(bytes(raw[:-3]))) == []
+
+
+def test_parse_describes_a_payload_that_ends_early():
+    # The length is what the packet says it is, but the attribute it carries
+    # needs more bytes than are there
+    raw = build_packet_bytes(
+        Action.READ_RESPONSE, FunctionalDomain.IDENTIFICATION, 2, [1]
+    )
+
+    packet = parse_one(raw)
+
+    assert "Unable to decode the payload" in packet.error
+    assert list(Packet.parse(raw)) == []
+
+
+def test_parse_skips_everything_it_cannot_use():
+    assert list(Packet.parse(b"\x01\x02")) == []
+    assert list(Packet.parse(bytes([1, 1, 0, 0, 0]))) == []
+    assert list(Packet.parse(build_packet_bytes(99, 88, 1, [1]))) == []
+
+
+def test_attribute_name():
+    assert attribute_name(Attribute.MODE) == "mode"
+    assert attribute_name("mode") == "mode"
+
+
+def test_parse_keeps_the_header_of_an_unknown_packet():
+    packet = parse_one(build_packet_bytes(99, 88, 1, [1], sequence=9))
+
+    assert packet.revision == 1
+    assert packet.sequence == 9
+    assert packet.count == 4

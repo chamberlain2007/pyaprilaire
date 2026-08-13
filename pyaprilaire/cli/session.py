@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,16 +19,9 @@ from datetime import datetime
 from typing import Any
 
 from ..client import AprilaireClient, _AprilaireClientProtocol
-from ..packet import Packet
+from ..packet import Packet, attribute_name, split_packets
 from .commands import ClientCommand, discover_client_commands, find_command
-from .frame import (
-    FrameDescription,
-    attribute_name,
-    describe_frames,
-    format_decimal,
-    format_hex,
-    hexdump,
-)
+from .format import format_decimal, format_hex, hexdump
 
 SENT = "sent"
 RECEIVED = "received"
@@ -49,7 +43,7 @@ class LogEntry:
     message: str
     timestamp: datetime = field(default_factory=datetime.now)
     raw: bytes = None
-    frames: list[FrameDescription] = field(default_factory=list)
+    packets: list[Packet] = field(default_factory=list)
     remainder: bytes = b""
 
     @property
@@ -69,8 +63,8 @@ class LogEntry:
         if self.raw is not None:
             entry["raw"] = format_hex(self.raw)
 
-        if self.frames:
-            entry["frames"] = [frame_to_dict(frame) for frame in self.frames]
+        if self.packets:
+            entry["packets"] = [packet_to_dict(packet) for packet in self.packets]
 
         if self.remainder:
             entry["remainder"] = format_hex(self.remainder)
@@ -82,26 +76,44 @@ class LogEntry:
         return json.dumps(self.to_dict(), default=str)
 
 
-def frame_to_dict(frame: FrameDescription) -> dict[str, Any]:
-    """Convert a frame description into a JSON serializable structure"""
+def _describe_packets(data: bytes) -> tuple[list[Packet], bytes]:
+    """Describe every complete packet in a byte stream
+
+    Nothing is discarded: a packet that the library can't act on, such as one
+    for an undocumented attribute or with a bad checksum, is described as far
+    as it can be. Whatever is left of an incomplete packet is returned so that
+    it can be held until the rest of it arrives.
+    """
+
+    raw_packets, remainder = split_packets(data)
+
+    packets = [
+        packet for raw in raw_packets for packet in Packet.parse(raw, strict=False)
+    ]
+
+    return packets, remainder
+
+
+def packet_to_dict(packet: Packet) -> dict[str, Any]:
+    """Convert a packet into a JSON serializable structure"""
 
     return {
-        "raw": format_hex(frame.raw),
-        "revision": frame.revision,
-        "sequence": frame.sequence,
-        "count": frame.count,
-        "action": frame.action,
-        "action_name": frame.action_name,
-        "functional_domain": frame.functional_domain,
-        "functional_domain_name": frame.functional_domain_name,
-        "attribute": frame.attribute,
-        "nack_attribute": frame.nack_attribute,
-        "payload": format_hex(frame.payload),
-        "crc": frame.crc,
-        "crc_valid": frame.crc_valid,
-        "summary": frame.summary,
-        "decoded": dict(frame.decoded),
-        "error": frame.error,
+        "raw": format_hex(packet.raw),
+        "revision": packet.revision,
+        "sequence": packet.sequence,
+        "count": packet.count,
+        "action": packet.action,
+        "action_name": packet.action_name,
+        "functional_domain": packet.functional_domain,
+        "functional_domain_name": packet.functional_domain_name,
+        "attribute": packet.attribute,
+        "nack_attribute": packet.nack_attribute,
+        "payload": format_hex(packet.payload),
+        "crc": packet.crc,
+        "crc_valid": packet.crc_valid,
+        "summary": packet.summary,
+        "decoded": dict(packet.decoded),
+        "error": packet.error,
     }
 
 
@@ -109,53 +121,53 @@ def format_entry_lines(entry: LogEntry, detail: bool = False) -> list[str]:
     """Render an entry as plain text lines
 
     The first line is a summary of the entry, and the remaining lines are
-    indented details of each frame it contains.
+    indented details of each packet it contains.
     """
 
     prefix = {SENT: "-->", RECEIVED: "<--", ERROR: "!!!"}.get(entry.kind, "---")
 
     lines = [f"{entry.time_text} {prefix} {entry.message}"]
 
-    for frame in entry.frames:
-        lines.extend(f"      {line}" for line in format_frame_lines(frame, detail))
+    for packet in entry.packets:
+        lines.extend(f"      {line}" for line in format_packet_lines(packet, detail))
 
     if entry.remainder:
-        lines.append(f"      incomplete frame: {format_hex(entry.remainder)}")
+        lines.append(f"      incomplete packet: {format_hex(entry.remainder)}")
 
     return lines
 
 
-def format_frame_lines(frame: FrameDescription, detail: bool = False) -> list[str]:
-    """Render a frame as plain text lines, in both hex and decoded form"""
+def format_packet_lines(packet: Packet, detail: bool = False) -> list[str]:
+    """Render a packet as plain text lines, in both hex and decoded form"""
 
-    lines = [frame.summary]
+    lines = [packet.summary]
 
     if detail:
-        lines.extend(hexdump(frame.raw))
+        lines.extend(hexdump(packet.raw))
     else:
-        lines.append(format_hex(frame.raw))
+        lines.append(format_hex(packet.raw))
 
-    crc_text = "?" if frame.crc is None else f"0x{frame.crc:02x}"
+    crc_text = "?" if packet.crc is None else f"0x{packet.crc:02x}"
 
     lines.append(
-        f"revision={frame.revision} sequence={frame.sequence}"
-        f" length={frame.count} crc={crc_text}"
-        f" ({'valid' if frame.crc_valid else 'INVALID'})"
+        f"revision={packet.revision} sequence={packet.sequence}"
+        f" length={packet.count} crc={crc_text}"
+        f" ({'valid' if packet.crc_valid else 'INVALID'})"
     )
 
-    if frame.error:
-        lines.append(frame.error)
+    if packet.error:
+        lines.append(packet.error)
 
-    decoded = frame.decoded
+    decoded = packet.decoded
 
     for name, value in decoded:
         lines.append(f"{name} = {value}")
 
-    if frame.payload and (detail or not decoded):
-        lines.append(f"payload: {format_hex(frame.payload)}")
-        lines.append(f"payload (decimal): {format_decimal(frame.payload)}")
+    if packet.payload and (detail or not decoded):
+        lines.append(f"payload: {format_hex(packet.payload)}")
+        lines.append(f"payload (decimal): {format_decimal(packet.payload)}")
 
-    if not decoded and not frame.payload:
+    if not decoded and not packet.payload:
         lines.append("no payload")
 
     return lines
@@ -330,7 +342,7 @@ class DebugSession:
         kind: str,
         message: str,
         raw: bytes = None,
-        frames: list[FrameDescription] = None,
+        packets: list[Packet] = None,
         remainder: bytes = b"",
     ) -> LogEntry:
         """Record an entry and notify listeners"""
@@ -339,7 +351,7 @@ class DebugSession:
             kind=kind,
             message=message,
             raw=raw,
-            frames=frames or [],
+            packets=packets or [],
             remainder=remainder,
         )
 
@@ -368,40 +380,40 @@ class DebugSession:
             except Exception:
                 self.logger.exception("State listener failed")
 
-    def _describe(self, kind: str, data: bytes, frames, remainder: bytes) -> LogEntry:
+    def _describe(self, kind: str, data: bytes, packets, remainder: bytes) -> LogEntry:
         """Record traffic in a single direction"""
 
-        if frames:
-            summary = "; ".join(frame.summary for frame in frames)
+        if packets:
+            summary = "; ".join(packet.summary for packet in packets)
         else:
-            summary = "no complete frame"
+            summary = "no complete packet"
 
         return self.log(
             kind,
             f"{len(data)} byte(s): {summary}",
             raw=data,
-            frames=frames,
+            packets=packets,
             remainder=remainder,
         )
 
     def record_sent(self, data: bytes) -> LogEntry:
         """Record data written to the device"""
 
-        # Each write contains whole frames, so nothing is carried over
-        frames, remainder = describe_frames(data)
+        # Each write contains whole packets, so nothing is carried over
+        packets, remainder = _describe_packets(data)
 
-        return self._describe(SENT, data, frames, remainder)
+        return self._describe(SENT, data, packets, remainder)
 
     def record_received(self, data: bytes) -> LogEntry:
         """Record data received from the device
 
-        A read can end part way through a frame, so anything left over is
+        A read can end part way through a packet, so anything left over is
         held until the rest of it arrives.
         """
 
-        frames, self._receive_buffer = describe_frames(self._receive_buffer + data)
+        packets, self._receive_buffer = _describe_packets(self._receive_buffer + data)
 
-        return self._describe(RECEIVED, data, frames, self._receive_buffer)
+        return self._describe(RECEIVED, data, packets, self._receive_buffer)
 
     async def connect(self) -> None:
         """Connect to the device
@@ -512,8 +524,8 @@ class DebugSession:
         """Write bytes to the device exactly as given
 
         Nothing is added or corrected, so the sequence number and CRC are
-        whatever was provided. This allows deliberately malformed frames to be
-        sent to see how a device responds.
+        whatever was provided. This allows deliberately malformed packets to
+        be sent to see how a device responds.
 
         Raises:
             SessionError: there is no connection, or no bytes were given
@@ -543,6 +555,52 @@ class DebugSession:
 
         # Give the transport a moment to close before the loop stops
         await asyncio.sleep(0)
+
+
+async def check_connection(session: DebugSession, timeout: float = 5.0) -> bool:
+    """Connect to a device, ask it for something and see whether it answers
+
+    Every message is recorded as it would be in an interactive session, so
+    what happened can be read on screen or in a capture file.
+
+    Returns:
+        Whether the device answered
+    """
+
+    try:
+        await session.connect()
+    except (OSError, SessionError) as exc:
+        session.log(ERROR, f"Unable to connect: {exc}")
+        return False
+
+    try:
+        await session.run_command("read_mac_address")
+    except SessionError as exc:
+        session.log(ERROR, str(exc))
+        return False
+
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        mac_address = session.state.get("mac_address")
+
+        if mac_address:
+            session.log(
+                INFO,
+                f"Connected to {session.host}:{session.port}"
+                f" with MAC address {mac_address}",
+            )
+
+            return True
+
+        await asyncio.sleep(0.05)
+
+    session.log(
+        ERROR,
+        f"No response from {session.host}:{session.port} within {timeout:g} second(s)",
+    )
+
+    return False
 
 
 class EntryWriter:

@@ -27,13 +27,13 @@ Pressing enter asks which of the three ways to send something you want, and each
 
 - **A client function** (`f`). The functions exposed by `AprilaireClient`, such as `update_setpoint` or `read_sensors`, are listed with their parameters. Choosing one prompts for the values it needs.
 - **A packet** (`p`). The action, the functional domain and then the attribute are each chosen from a list, where the attributes that are known are shown along with the fields they carry, and any other attribute can be entered by number. A packet whose fields are known is then filled in a field at a time; one whose fields aren't takes its payload as hex; and an action that carries no payload, such as a read request, is sent as soon as its attribute is known. The sequence number and CRC are filled in as usual.
-- **Raw bytes** (`x`). The bytes are written exactly as entered, with nothing added or corrected, so deliberately malformed frames can be sent to see how a device responds. A calculated CRC can optionally be appended.
+- **Raw bytes** (`x`). The bytes are written exactly as entered, with nothing added or corrected, so deliberately malformed packets can be sent to see how a device responds. A calculated CRC can optionally be appended.
 
 Bytes are entered as pairs of hex digits, with or without spaces between them, so `01 02 0a` and `01020a` are the same three bytes. Anything else is rejected rather than guessed at, and the raw bytes dialog says what is wrong as you type.
 
 ## Reading messages
 
-Each message, in both directions, is shown as the bytes that were on the wire, the header broken down into its parts, whether the CRC is valid, and the decoded values. A frame that the library can't decode, such as an undocumented attribute, still shows its header and payload, so unknown messages can be explored. `d` toggles hex dumps and full payloads.
+Each message, in both directions, is shown as the bytes that were on the wire, the header broken down into its parts, whether the CRC is valid, and the decoded values. A packet that the library can't act on, such as one for an undocumented attribute or with a bad CRC, still shows its header and payload, so unknown messages can be explored. `d` toggles hex dumps and full payloads.
 
 Messages are shown as they arrive, and the current state of the device, built up from everything received so far, can be shown alongside them with `s`. Press `?` for the full list of keys.
 
@@ -42,18 +42,31 @@ Messages are shown as they arrive, and the current state of the device, built up
 | Option | Description |
 | --- | --- |
 | `--no-tui` | Use the line based interface instead of the full screen one, which also avoids needing Textual |
-| `--json` | Write each message as a JSON object on its own line, which implies `--no-tui` so that only JSON is written to stdout |
-| `-o`, `--output PATH` | Also write every message to a file, as JSON when `--json` is given and as text otherwise |
-| `-i`, `--input PATH` | Run the commands in a file, which also implies `--no-tui`. `-` reads them from standard input |
+| `--json` | Write each message as a JSON object on its own line, in [newline delimited JSON](https://github.com/ndjson/ndjson-spec) form. Without `--output` these go to stdout, which implies `--no-tui` so that stdout carries nothing else |
+| `-o`, `--output PATH` | Also write every message to a file, as newline delimited JSON when `--json` is given and as text otherwise |
+| `-i`, `--input PATH` | Run the commands in a file, then carry on interactively. `-` reads them from standard input, which implies `--no-tui` |
+| `--test-connection` | Connect, report whether the device answers and exit, with a status of 0 if it did and 1 if it did not |
 | `--wait SECONDS` | How long to stay connected after scripted commands run out, so that the responses to them arrive (default: 2) |
 | `-f`, `--follow` | Stay connected after scripted commands run out, until interrupted |
 | `--no-auto-status` | Don't send the usual startup requests when connecting, so that only the commands you send appear |
 | `--reconnect` | Keep reconnecting when the connection is lost or refused |
 | `--detail` | Start with hex dumps and full payloads shown |
 
+The full screen interface gives way to the line based one whenever something else needs the terminal: `--no-tui`, JSON on stdout, commands piped in, or `--test-connection`. Capturing to a file and running a script from one both work either way.
+
 ```
 python -m pyaprilaire.cli --no-tui --json --output capture.ndjson
 ```
+
+## Testing a connection
+
+To check whether a device is reachable and answering, without starting a session:
+
+```
+python -m pyaprilaire.cli --host 192.168.1.5 --test-connection
+```
+
+It connects, asks for the MAC address and waits up to five seconds for an answer, then exits with a status of 0 if it got one and 1 if it did not, which is what a script or a health check needs. The exchange is shown, and recorded to `--output` if one is given.
 
 ## Scripting
 
@@ -63,7 +76,7 @@ The line based interface takes the same commands as text, and `help` lists them.
 echo "update_mode 3" | python -m pyaprilaire.cli --host 192.168.1.5
 ```
 
-A line starting with `{` is read as a JSON record instead, so a script can be written as ndjson:
+A line starting with `{` is read as a JSON record instead, so a script can be written as newline delimited JSON:
 
 ```json
 {"command": "update_setpoint", "arguments": [23.5, 19]}
@@ -79,9 +92,9 @@ python -m pyaprilaire.cli --json --output capture.ndjson --input script.ndjson
 python -m pyaprilaire.cli --input capture.ndjson
 ```
 
-Note that a replayed frame carries the sequence number it was captured with, as it is sent exactly as it was recorded.
+Note that a replayed packet carries the sequence number it was captured with, as it is sent exactly as it was recorded.
 
-Responses arrive after the command that caused them, so the session stays open for `--wait` seconds once the commands run out, or until interrupted with `--follow`. A script that ends in `quit` leaves immediately instead. When there is a terminal, `--input` runs the script and then continues interactively.
+Responses arrive after the command that caused them, so the session stays open for `--wait` seconds once the commands run out, or until interrupted with `--follow`. A script that ends in `quit` leaves immediately instead. When there is a terminal, `--input` runs the script and then continues interactively, in the full screen interface as well as the line based one.
 
 # Development
 

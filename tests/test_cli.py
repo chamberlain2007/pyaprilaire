@@ -282,7 +282,7 @@ def test_main_writes_to_a_file(monkeypatch, tmp_path):
     assert path.exists()
 
 
-def test_main_reports_a_missing_tui(monkeypatch, capsys):
+def test_main_reports_a_missing_tui(monkeypatch, capsys, at_a_terminal):
     # Setting the module to None makes importing it raise ImportError, as it
     # would if Textual weren't installed
     monkeypatch.setitem(sys.modules, "pyaprilaire.cli.tui", None)
@@ -559,7 +559,7 @@ def test_verbose_logging_is_suppressed_by_the_tui():
     assert all(isinstance(handler, logging.NullHandler) for handler in logger.handlers)
 
 
-def test_main_runs_the_tui(monkeypatch):
+def test_main_runs_the_tui(monkeypatch, at_a_terminal):
     pytest.importorskip("textual", reason="the TUI requires the cli extra")
 
     app = Mock()
@@ -569,6 +569,96 @@ def test_main_runs_the_tui(monkeypatch):
     assert cli.main([]) == 0
 
     app.run.assert_called_once()
+
+
+def test_main_uses_the_line_interface_without_a_terminal(monkeypatch):
+    """Commands piped in need standard input, so the full screen interface
+    gives way to the line based one"""
+
+    run = AsyncMock()
+
+    monkeypatch.setattr(console_module.ConsoleSession, "run", run)
+    monkeypatch.setattr(sys, "stdin", Mock(isatty=Mock(return_value=False)))
+
+    assert cli.main([]) == 0
+
+    run.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--no-tui"],
+        ["--json"],
+        ["--input", "-"],
+        ["--test-connection"],
+    ],
+)
+def test_main_uses_the_line_interface_when_stdout_or_stdin_is_needed(
+    monkeypatch, at_a_terminal, arguments, tmp_path
+):
+    pytest.importorskip("textual", reason="the TUI requires the cli extra")
+
+    tui = Mock()
+
+    monkeypatch.setattr("pyaprilaire.cli.tui.AprilaireTui", tui)
+    monkeypatch.setattr(console_module.ConsoleSession, "run", AsyncMock())
+    monkeypatch.setattr(
+        console_module, "check_connection", AsyncMock(return_value=True)
+    )
+
+    cli.main(arguments)
+
+    assert tui.call_count == 0
+
+
+def test_main_keeps_the_tui_when_json_goes_to_a_file(
+    monkeypatch, at_a_terminal, tmp_path
+):
+    pytest.importorskip("textual", reason="the TUI requires the cli extra")
+
+    app = Mock()
+
+    monkeypatch.setattr("pyaprilaire.cli.tui.AprilaireTui", Mock(return_value=app))
+
+    # The JSON has somewhere of its own to go, so it isn't competing for
+    # standard output
+    assert cli.main(["--json", "--output", str(tmp_path / "capture.ndjson")]) == 0
+
+    app.run.assert_called_once()
+
+
+def test_main_gives_the_tui_a_script_to_run(monkeypatch, at_a_terminal, tmp_path):
+    pytest.importorskip("textual", reason="the TUI requires the cli extra")
+
+    script = tmp_path / "script.txt"
+    script.write_text("read_control\n")
+
+    tui = Mock()
+
+    monkeypatch.setattr("pyaprilaire.cli.tui.AprilaireTui", tui)
+
+    assert cli.main(["--input", str(script)]) == 0
+
+    assert tui.call_args.kwargs["script_path"] == str(script)
+
+
+def test_main_tests_the_connection(monkeypatch, capsys):
+    check = AsyncMock(return_value=True)
+
+    monkeypatch.setattr(console_module, "check_connection", check)
+
+    assert cli.main(["--test-connection"]) == 0
+
+    assert check.await_count == 1
+
+
+def test_main_reports_a_connection_that_failed(monkeypatch):
+    monkeypatch.setattr(
+        console_module, "check_connection", AsyncMock(return_value=False)
+    )
+
+    assert cli.main(["--test-connection"]) == 1
 
 
 def test_main_handles_an_interrupt(monkeypatch):

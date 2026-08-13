@@ -1023,3 +1023,41 @@ async def test_a_form_without_fields(session):
         app.screen._submit()
 
         await pilot.pause()
+
+
+async def test_a_script_is_run_before_becoming_interactive(session, tmp_path):
+    script = tmp_path / "script.txt"
+    script.write_text("read_control\ndetail on\n")
+
+    app = AprilaireTui(session, script_path=str(script))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert session.run_command.await_args.args[0].name == "read_control"
+        # The script can change what the session shows, as if it had been typed
+        assert app.detail
+
+
+async def test_a_script_that_quits_leaves(session, tmp_path):
+    script = tmp_path / "script.txt"
+    script.write_text("quit\n")
+
+    session.close = AsyncMock()
+
+    app = AprilaireTui(session, script_path=str(script))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        session.close.assert_awaited_once()
+
+
+async def test_a_script_that_cannot_be_read_is_reported(session, tmp_path):
+    app = AprilaireTui(session, script_path=str(tmp_path / "nothing.txt"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert session.entries[-1].kind == "error"
+        assert "Unable to read" in session.entries[-1].message

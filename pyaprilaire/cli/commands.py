@@ -15,8 +15,7 @@ from typing import Any
 
 from ..client import AprilaireClient
 from ..const import Action, FunctionalDomain
-from ..packet import MAPPING, Packet, ValueType
-from .frame import attribute_name
+from ..packet import MAPPING, Packet, ValueType, attribute_name
 
 # Methods that manage the connection itself rather than sending a command
 EXCLUDED_COMMANDS = {

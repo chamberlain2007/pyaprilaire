@@ -51,8 +51,9 @@ filterwarnings = []
 
 [tool.coverage.run]
 omit = [
-    "pyaprilaire/mock_server/*",
-    "pyaprilaire/test_connection.py"
+    # Only the entry point of the mock server, which just parses arguments
+    # and runs a loop, is left out
+    "pyaprilaire/mock_server/__main__.py"
 ]
 
 [tool.ruff]

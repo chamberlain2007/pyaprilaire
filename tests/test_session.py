@@ -15,8 +15,10 @@ from pyaprilaire.cli.session import (
     EntryWriter,
     LogEntry,
     SessionError,
+    check_connection,
     format_entry_lines,
 )
+from pyaprilaire.client import _AprilaireClientProtocol
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import Packet
 
@@ -77,12 +79,12 @@ def test_record_sent(session):
     assert entry.kind == SENT
     assert entry.raw == data
     assert entry.message == "8 byte(s): READ_REQUEST CONTROL attribute 1"
-    assert len(entry.frames) == 1
-    assert entry.frames[0].crc_valid
+    assert len(entry.packets) == 1
+    assert entry.packets[0].crc_valid
     assert list(session.entries) == [entry]
 
 
-def test_record_received_decodes_multiple_frames(session):
+def test_record_received_decodes_multiple_packets(session):
     first = Packet(
         Action.READ_RESPONSE,
         FunctionalDomain.SCHEDULING,
@@ -99,15 +101,15 @@ def test_record_received_decodes_multiple_frames(session):
     entry = session.record_received(first + second)
 
     assert entry.kind == RECEIVED
-    assert [frame.summary for frame in entry.frames] == [
+    assert [packet.summary for packet in entry.packets] == [
         "READ_RESPONSE SCHEDULING attribute 4",
         "READ_RESPONSE IDENTIFICATION attribute 2",
     ]
-    assert dict(entry.frames[0].decoded) == {"hold": 1}
-    assert dict(entry.frames[1].decoded) == {"mac_address": "1:2:3:4:5:6"}
+    assert dict(entry.packets[0].decoded) == {"hold": 1}
+    assert dict(entry.packets[1].decoded) == {"mac_address": "1:2:3:4:5:6"}
 
 
-def test_record_received_waits_for_the_rest_of_a_frame(session):
+def test_record_received_waits_for_the_rest_of_a_packet(session):
     data = Packet(
         Action.READ_RESPONSE,
         FunctionalDomain.SCHEDULING,
@@ -117,13 +119,13 @@ def test_record_received_waits_for_the_rest_of_a_frame(session):
 
     first_entry = session.record_received(data[:5])
 
-    assert first_entry.frames == []
-    assert first_entry.message == "5 byte(s): no complete frame"
+    assert first_entry.packets == []
+    assert first_entry.message == "5 byte(s): no complete packet"
     assert first_entry.remainder == data[:5]
 
     second_entry = session.record_received(data[5:])
 
-    assert [frame.summary for frame in second_entry.frames] == [
+    assert [packet.summary for packet in second_entry.packets] == [
         "READ_RESPONSE SCHEDULING attribute 4"
     ]
     assert second_entry.remainder == b""
@@ -241,7 +243,7 @@ def test_send_raw_is_recorded(session, transport):
     entry = session.entries[-1]
 
     assert entry.kind == SENT
-    assert entry.frames[0].summary == "READ_REQUEST CONTROL attribute 1"
+    assert entry.packets[0].summary == "READ_REQUEST CONTROL attribute 1"
 
 
 def test_send_raw_requires_bytes(session, transport):
@@ -271,12 +273,25 @@ async def test_received_data_is_recorded(session, transport):
     assert session.state["hold"] == 1
 
 
-def test_malformed_received_data_does_not_stop_the_session(session, transport):
+def test_malformed_received_data_is_still_shown(session, transport):
     session.client.protocol.data_received(b"\x01\x02\xff\xff\x01\x02")
 
-    # The bytes are still shown even though the client can't decode them
+    # The bytes are still shown even though there is nothing to decode
+    entry = session.entries[-1]
+
+    assert entry.kind == RECEIVED
+    assert "Length mismatch" in entry.packets[0].error
+
+
+def test_a_failure_to_handle_received_data_does_not_stop_the_session(
+    session, transport
+):
+    with patch.object(
+        _AprilaireClientProtocol, "data_received", side_effect=ValueError("nope")
+    ):
+        session.client.protocol.data_received(b"\x01\x02\xff\xff\x01\x02")
+
     assert session.entries[-2].kind == RECEIVED
-    assert session.entries[-2].frames[0].packets == []
     assert session.entries[-1].kind == ERROR
     assert session.entries[-1].message.startswith("Error handling received data")
 
@@ -353,13 +368,13 @@ def test_entry_to_json(session):
 
     assert result["kind"] == RECEIVED
     assert result["raw"] == data.hex(" ")
-    assert result["frames"][0]["decoded"] == {"hold": 1}
-    assert result["frames"][0]["crc_valid"] is True
-    assert result["frames"][0]["action_name"] == "READ_RESPONSE"
+    assert result["packets"][0]["decoded"] == {"hold": 1}
+    assert result["packets"][0]["crc_valid"] is True
+    assert result["packets"][0]["action_name"] == "READ_RESPONSE"
     assert "timestamp" in result
 
 
-def test_entry_to_json_without_frames():
+def test_entry_to_json_without_packets():
     result = json.loads(LogEntry(INFO, "hello").to_json())
 
     assert result == {
@@ -430,7 +445,7 @@ async def test_a_failed_connection_is_not_left_connecting(session):
     assert session.status_text == "disconnected"
 
 
-def test_entry_to_json_with_an_incomplete_frame(session):
+def test_entry_to_json_with_an_incomplete_packet(session):
     data = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
 
     result = json.loads(session.record_received(data[:4]).to_json())
@@ -438,15 +453,15 @@ def test_entry_to_json_with_an_incomplete_frame(session):
     assert result["remainder"] == data[:4].hex(" ")
 
 
-def test_format_entry_lines_with_an_incomplete_frame(session):
+def test_format_entry_lines_with_an_incomplete_packet(session):
     data = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
 
     lines = format_entry_lines(session.record_received(data[:4]))
 
-    assert lines[-1].strip() == f"incomplete frame: {data[:4].hex(' ')}"
+    assert lines[-1].strip() == f"incomplete packet: {data[:4].hex(' ')}"
 
 
-def test_format_entry_lines_shows_a_frame_error(session):
+def test_format_entry_lines_shows_a_packet_error(session):
     # A length that can't be trusted is surfaced rather than dropped
     lines = format_entry_lines(session.record_sent(b"\x01\x02\xff\xff\x01\x02"))
 
@@ -526,3 +541,44 @@ async def test_run_command_with_a_command_object(session, transport):
     assert session.client.protocol.packet_queue.get_nowait() == Packet(
         Action.READ_REQUEST, FunctionalDomain.CONTROL, 1
     )
+
+
+async def test_check_connection_reports_a_device_that_answers(session, transport):
+    session.connect = AsyncMock()
+
+    async def answer(*_):
+        session.state["mac_address"] = "1:2:3:4:5:6"
+
+    session.run_command = AsyncMock(side_effect=answer)
+
+    assert await check_connection(session)
+
+    assert "with MAC address 1:2:3:4:5:6" in session.entries[-1].message
+
+
+async def test_check_connection_reports_a_device_that_does_not_answer(
+    session, transport
+):
+    session.connect = AsyncMock()
+    session.run_command = AsyncMock()
+
+    assert not await check_connection(session, timeout=0.05)
+
+    assert session.entries[-1].kind == ERROR
+    assert "No response" in session.entries[-1].message
+
+
+async def test_check_connection_reports_a_refused_connection(session):
+    session.connect = AsyncMock(side_effect=OSError("refused"))
+
+    assert not await check_connection(session)
+
+    assert session.entries[-1].message == "Unable to connect: refused"
+
+
+async def test_check_connection_reports_a_command_that_could_not_be_sent(session):
+    session.connect = AsyncMock()
+
+    assert not await check_connection(session)
+
+    assert session.entries[-1].message == "Not connected to a device"

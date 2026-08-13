@@ -38,6 +38,7 @@ from .commands import (
     mapping_fields,
     parse_hex_bytes,
 )
+from .script import ScriptRunner, read_script
 from .session import (
     ERROR,
     INFO,
@@ -76,8 +77,8 @@ Every list can be narrowed by typing, and escape goes back without sending
 anything.
 
 Every message is shown as the bytes that were on the wire and as the values
-decoded from them. A frame that can't be decoded still shows its header, its
-payload and whether its CRC is valid.
+decoded from them. A packet that can't be decoded still shows its header,
+its payload and whether its CRC is valid.
 """.strip()
 
 FUNCTION = "function"
@@ -425,11 +426,17 @@ class AprilaireTui(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, session: DebugSession, detail: bool = False) -> None:
+    def __init__(
+        self,
+        session: DebugSession,
+        detail: bool = False,
+        script_path: str = None,
+    ) -> None:
         super().__init__()
 
         self.session = session
         self.detail = detail
+        self.script_path = script_path
         self.repeat_action = None
 
         self.title = "pyaprilaire"
@@ -505,7 +512,7 @@ class AprilaireTui(App):
 
     @work
     async def _connect(self) -> None:
-        """Connect to the device"""
+        """Connect to the device, and run any commands that were given"""
 
         try:
             await self.session.connect()
@@ -513,6 +520,37 @@ class AprilaireTui(App):
             self.session.log(ERROR, f"Unable to connect: {exc}")
 
         self._update_status()
+
+        if self.script_path:
+            await self._run_script()
+
+    async def _run_script(self) -> None:
+        """Run the commands of a script before becoming interactive"""
+
+        path, self.script_path = self.script_path, None
+
+        try:
+            lines = read_script(path)
+        except OSError as exc:
+            self.session.log(ERROR, f"Unable to read {path}: {exc}")
+            return
+
+        runner = ScriptRunner(
+            self.session,
+            echo=lambda text: self.session.log(INFO, text),
+            detail=self.detail,
+        )
+
+        await runner.run(lines)
+
+        if runner.detail != self.detail:
+            self.detail = runner.detail
+            self._refresh_log()
+
+        if not runner.running:
+            # The script asked to leave, so there is nothing to be
+            # interactive about
+            await self.action_quit()
 
     def action_toggle_connection(self) -> None:
         """Connect to or disconnect from the device"""

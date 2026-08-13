@@ -5,6 +5,10 @@ its raw form and its decoded form.
 
     python -m pyaprilaire.cli --host 192.168.1.5
 
+It can also just report whether a device answers at all:
+
+    python -m pyaprilaire.cli --host 192.168.1.5 --test-connection
+
 Nothing here is needed to use the library. The full screen interface also
 needs Textual, which is installed with the `cli` extra:
 `pip install pyaprilaire[cli]`.
@@ -48,23 +52,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="write each message as a JSON object on its own line, which"
-        " implies --no-tui so that only JSON is written to stdout",
+        help="write each message as a JSON object on its own line (ndjson)."
+        " Without --output this is written to stdout, which implies --no-tui"
+        " so that stdout carries nothing else",
     )
     parser.add_argument(
         "-o",
         "--output",
-        help="also write every message to this file, as JSON when --json is"
-        " given and as text otherwise",
+        help="also write every message to this file, as one JSON object per"
+        " line (ndjson) when --json is given and as text otherwise",
     )
     parser.add_argument(
         "-i",
         "--input",
         help="run the commands in this file, as either the text you would"
-        " type or one JSON record per line, then continue interactively if"
-        " there is a terminal; '-' reads them from standard input. Implies"
-        " --no-tui. Commands are also read from standard input when it is"
-        " piped in",
+        " type or one JSON record per line, and then continue interactively;"
+        " '-' reads them from standard input, which implies --no-tui."
+        " Commands are also read from standard input when it is piped in",
+    )
+    parser.add_argument(
+        "--test-connection",
+        action="store_true",
+        help="connect to the device, report whether it answers and exit with"
+        " a status of 0 if it did and 1 if it did not",
     )
     parser.add_argument(
         "--wait",
@@ -131,9 +141,17 @@ def main(argv: list[str] = None) -> int:
 
     args = build_parser().parse_args(argv)
 
-    # JSON output owns stdout, and scripted commands need somewhere to be
-    # typed, so neither can use the full screen interface
-    use_tui = not (args.no_tui or args.json or args.input)
+    # The full screen interface needs a terminal it doesn't have to share, so
+    # it gives way to anything that reads from stdin or writes to stdout.
+    # Everything else, including a captured session and a script to run
+    # first, works just as well with it as without it.
+    use_tui = not (
+        args.no_tui
+        or args.test_connection
+        or (args.json and not args.output)
+        or args.input == "-"
+        or not sys.stdin.isatty()
+    )
 
     if use_tui:
         try:
@@ -159,24 +177,32 @@ def main(argv: list[str] = None) -> int:
     if writer:
         session.add_entry_listener(writer)
 
+    console = (
+        None
+        if use_tui
+        else ConsoleSession(
+            session,
+            json_output=args.json,
+            detail=args.detail,
+            input_path=args.input,
+            wait=args.wait,
+            follow=args.follow,
+        )
+    )
+
+    status = 0
+
     try:
-        if use_tui:
-            AprilaireTui(session, detail=args.detail).run()
+        if args.test_connection:
+            status = 0 if asyncio.run(console.test_connection()) else 1
+        elif use_tui:
+            AprilaireTui(session, detail=args.detail, script_path=args.input).run()
         else:
-            asyncio.run(
-                ConsoleSession(
-                    session,
-                    json_output=args.json,
-                    detail=args.detail,
-                    input_path=args.input,
-                    wait=args.wait,
-                    follow=args.follow,
-                ).run()
-            )
+            asyncio.run(console.run())
     except KeyboardInterrupt:
         pass
     finally:
         if writer:
             writer.close()
 
-    return 0
+    return status
