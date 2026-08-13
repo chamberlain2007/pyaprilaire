@@ -31,7 +31,7 @@ lexid==2021.1006
     # via bumpver
 mypy-extensions==1.0.0
     # via black
-packaging==23.0
+packaging==26.3
     # via
     #   black
     #   build
