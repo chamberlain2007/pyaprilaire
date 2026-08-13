@@ -5,10 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyaprilaire.commands import find_command
-from pyaprilaire.const import Action, Attribute, FunctionalDomain
-from pyaprilaire.packet import Packet
-from pyaprilaire.session import (
+from pyaprilaire.cli.commands import find_command
+from pyaprilaire.cli.session import (
     ERROR,
     INFO,
     RECEIVED,
@@ -19,6 +17,8 @@ from pyaprilaire.session import (
     SessionError,
     format_entry_lines,
 )
+from pyaprilaire.const import Action, Attribute, FunctionalDomain
+from pyaprilaire.packet import Packet
 
 
 class FakeTransport:

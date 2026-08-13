@@ -4,6 +4,10 @@ Connects to a device, sends commands to it and shows every message in both
 its raw form and its decoded form.
 
     python -m pyaprilaire.cli --host 192.168.1.5
+
+Nothing here is needed to use the library. The full screen interface also
+needs Textual, which is installed with the `cli` extra:
+`pip install pyaprilaire[cli]`.
 """
 
 from __future__ import annotations
@@ -176,7 +180,3 @@ def main(argv: list[str] = None) -> int:
             writer.close()
 
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

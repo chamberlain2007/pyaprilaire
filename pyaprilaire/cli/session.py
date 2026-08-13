@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from .client import AprilaireClient, _AprilaireClientProtocol
+from ..client import AprilaireClient, _AprilaireClientProtocol
+from ..packet import Packet
 from .commands import ClientCommand, discover_client_commands, find_command
 from .frame import (
     FrameDescription,
@@ -27,7 +28,6 @@ from .frame import (
     format_hex,
     hexdump,
 )
-from .packet import Packet
 
 SENT = "sent"
 RECEIVED = "received"

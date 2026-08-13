@@ -1,5 +1,4 @@
-from pyaprilaire.const import Action, Attribute, FunctionalDomain
-from pyaprilaire.frame import (
+from pyaprilaire.cli.frame import (
     attribute_name,
     describe_frame,
     describe_frames,
@@ -8,6 +7,7 @@ from pyaprilaire.frame import (
     hexdump,
     split_frames,
 )
+from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import NackPacket, Packet
 
 

@@ -1,7 +1,7 @@
 import pytest
 
-from pyaprilaire import commands as commands_module
-from pyaprilaire.commands import (
+from pyaprilaire.cli import commands as commands_module
+from pyaprilaire.cli.commands import (
     CommandParameter,
     MappingField,
     build_packet,

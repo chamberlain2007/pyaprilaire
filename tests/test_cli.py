@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -9,10 +10,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from pyaprilaire import cli
-from pyaprilaire import console as console_module
-from pyaprilaire.console import ConsoleSession
+from pyaprilaire.cli import console as console_module
+from pyaprilaire.cli.console import ConsoleSession
+from pyaprilaire.cli.session import DEFAULT_PORT, DebugSession
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
-from pyaprilaire.session import DEFAULT_PORT, DebugSession
 
 
 @pytest.fixture
@@ -284,7 +285,7 @@ def test_main_writes_to_a_file(monkeypatch, tmp_path):
 def test_main_reports_a_missing_tui(monkeypatch, capsys):
     # Setting the module to None makes importing it raise ImportError, as it
     # would if Textual weren't installed
-    monkeypatch.setitem(sys.modules, "pyaprilaire.tui", None)
+    monkeypatch.setitem(sys.modules, "pyaprilaire.cli.tui", None)
 
     assert cli.main([]) == 2
 
@@ -563,7 +564,7 @@ def test_main_runs_the_tui(monkeypatch):
 
     app = Mock()
 
-    monkeypatch.setattr("pyaprilaire.tui.AprilaireTui", Mock(return_value=app))
+    monkeypatch.setattr("pyaprilaire.cli.tui.AprilaireTui", Mock(return_value=app))
 
     assert cli.main([]) == 0
 
@@ -588,7 +589,7 @@ def test_module_entry_point(monkeypatch):
     console.run = AsyncMock()
 
     monkeypatch.setattr(
-        "pyaprilaire.console.ConsoleSession", Mock(return_value=console)
+        "pyaprilaire.cli.console.ConsoleSession", Mock(return_value=console)
     )
     monkeypatch.setattr(cli.asyncio, "run", lambda coroutine: coroutine.close())
     monkeypatch.setattr(sys, "argv", ["pyaprilaire", "--no-tui"])
@@ -797,3 +798,9 @@ async def test_stdin_reader_reads_a_pipe(monkeypatch):
         reader = await console_module._stdin_reader()
 
         assert await reader.readline() == b"read_control\n"
+
+
+def test_the_entry_point_module_does_nothing_when_imported():
+    entry_point = importlib.import_module("pyaprilaire.cli.__main__")
+
+    assert entry_point.main is cli.main

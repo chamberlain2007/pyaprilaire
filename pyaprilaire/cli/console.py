@@ -19,6 +19,7 @@ import stat
 import sys
 from typing import Any, Iterable
 
+from ..const import Action, FunctionalDomain
 from .commands import (
     build_packet,
     known_attributes,
@@ -26,7 +27,6 @@ from .commands import (
     parse_enum,
     parse_hex_bytes,
 )
-from .const import Action, FunctionalDomain
 from .session import SENT, DebugSession, LogEntry, SessionError, format_entry_lines
 
 HELP = """

@@ -7,17 +7,18 @@ pytest.importorskip("textual", reason="the TUI requires the cli extra")
 
 from textual.widgets import DataTable, Input, OptionList, RichLog, Select  # noqa: E402
 
-# pylint: disable=wrong-import-position
-from pyaprilaire.const import Action, Attribute, FunctionalDomain  # noqa: E402
-from pyaprilaire.packet import Packet  # noqa: E402
-from pyaprilaire.session import DebugSession, SessionError  # noqa: E402
-from pyaprilaire.tui import (  # noqa: E402
+from pyaprilaire.cli.session import DebugSession, SessionError  # noqa: E402
+from pyaprilaire.cli.tui import (  # noqa: E402
     AprilaireTui,
     FormScreen,
     HelpScreen,
     PacketScreen,
     SelectionScreen,
 )
+
+# pylint: disable=wrong-import-position
+from pyaprilaire.const import Action, Attribute, FunctionalDomain  # noqa: E402
+from pyaprilaire.packet import Packet  # noqa: E402
 
 
 @pytest.fixture

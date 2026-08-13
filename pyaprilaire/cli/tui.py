@@ -29,13 +29,13 @@ from textual.widgets import (
     Static,
 )
 
+from ..const import Action, FunctionalDomain
 from .commands import (
     ClientCommand,
     build_packet,
     describe_packet_fields,
     parse_hex_bytes,
 )
-from .const import Action, FunctionalDomain
 from .session import (
     ERROR,
     INFO,

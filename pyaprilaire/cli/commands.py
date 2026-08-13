@@ -12,10 +12,10 @@ import typing
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .client import AprilaireClient
-from .const import Action, FunctionalDomain
+from ..client import AprilaireClient
+from ..const import Action, FunctionalDomain
+from ..packet import MAPPING, Packet, ValueType
 from .frame import attribute_name
-from .packet import MAPPING, Packet, ValueType
 
 # Methods that manage the connection itself rather than sending a command
 EXCLUDED_COMMANDS = {

@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .const import Action, FunctionalDomain
-from .packet import NackPacket, Packet, crc_calculator
+from ..const import Action, FunctionalDomain
+from ..packet import NackPacket, Packet, crc_calculator
 
 HEADER_SIZE = 4
 CRC_SIZE = 1
