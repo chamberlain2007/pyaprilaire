@@ -232,9 +232,9 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     Attribute.HEATING_EQUIPMENT_STATUS: {2: 2, 4: 7}.get(self.mode, 0),
                     Attribute.COOLING_EQUIPMENT_STATUS: {3: 2, 5: 2}.get(self.mode, 0),
                     Attribute.PROGRESSIVE_RECOVERY: 0,
-                    Attribute.FAN_STATUS: 1
-                    if self.fan_mode == 1 or self.fan_mode == 2
-                    else 0,
+                    Attribute.FAN_STATUS: (
+                        1 if self.fan_mode == 1 or self.fan_mode == 2 else 0
+                    ),
                 },
             )
         )
@@ -524,9 +524,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                         5: 2,
                                     }.get(self.mode, 0),
                                     Attribute.PROGRESSIVE_RECOVERY: 0,
-                                    Attribute.FAN_STATUS: 1
-                                    if self.fan_mode == 1 or self.fan_mode == 2
-                                    else 0,
+                                    Attribute.FAN_STATUS: (
+                                        1
+                                        if self.fan_mode == 1 or self.fan_mode == 2
+                                        else 0
+                                    ),
                                 },
                             )
                         )
@@ -552,7 +554,9 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 FunctionalDomain.CONTROL,
                                 3,
                                 sequence=self._get_sequence(),
-                                data={Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint},
+                                data={
+                                    Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
+                                },
                             )
                         )
                     elif packet.attribute == 4:
@@ -567,7 +571,9 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 FunctionalDomain.CONTROL,
                                 4,
                                 sequence=self._get_sequence(),
-                                data={Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint},
+                                data={
+                                    Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint
+                                },
                             )
                         )
                     elif packet.attribute == 5:
@@ -597,12 +603,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 data={
                                     Attribute.DEHUMIDIFICATION_STATUS: self.dehumidification_status,
                                     Attribute.HUMIDIFICATION_STATUS: self.humidification_status,
-                                    Attribute.VENTILATION_STATUS: 2
-                                    if self.fresh_air_mode
-                                    else 0,
-                                    Attribute.AIR_CLEANING_STATUS: 2
-                                    if self.air_cleaning_mode
-                                    else 0,
+                                    Attribute.VENTILATION_STATUS: (
+                                        2 if self.fresh_air_mode else 0
+                                    ),
+                                    Attribute.AIR_CLEANING_STATUS: (
+                                        2 if self.air_cleaning_mode else 0
+                                    ),
                                 },
                             )
                         )
@@ -636,12 +642,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 data={
                                     Attribute.DEHUMIDIFICATION_STATUS: 2,
                                     Attribute.HUMIDIFICATION_STATUS: 2,
-                                    Attribute.VENTILATION_STATUS: 2
-                                    if self.fresh_air_mode
-                                    else 0,
-                                    Attribute.AIR_CLEANING_STATUS: 2
-                                    if self.air_cleaning_mode
-                                    else 0,
+                                    Attribute.VENTILATION_STATUS: (
+                                        2 if self.fresh_air_mode else 0
+                                    ),
+                                    Attribute.AIR_CLEANING_STATUS: (
+                                        2 if self.air_cleaning_mode else 0
+                                    ),
                                 },
                             )
                         )
