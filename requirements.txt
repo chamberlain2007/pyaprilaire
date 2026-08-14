@@ -62,7 +62,7 @@ pytest==9.1.1
     #   pytest-cov
 pytest-asyncio==1.4.0
     # via pyaprilaire (pyproject.toml)
-pytest-cov==4.0.0
+pytest-cov==7.1.0
     # via pyaprilaire (pyproject.toml)
 python-discovery==1.5.2
     # via virtualenv
