@@ -52,7 +52,7 @@ pre-commit==4.6.2
     # via pyaprilaire (pyproject.toml)
 pygments==2.20.0
     # via pytest
-pyproject-hooks==1.0.0
+pyproject-hooks==1.2.0
     # via
     #   build
     #   pip-tools
