@@ -87,7 +87,7 @@ typing-extensions==4.16.0
     #   virtualenv
 virtualenv==21.7.4
     # via pre-commit
-wheel==0.38.4
+wheel==0.47.0
     # via pip-tools
 
 # The following packages are considered to be unsafe in a requirements file:
