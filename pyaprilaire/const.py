@@ -211,3 +211,241 @@ class Attribute(StrEnum):
     COS_MODEL_AND_REVISION = "cos_model_and_revision"
     COS_SUPPORT_MODULE = "cos_support_module"
     COS_LOCKOUTS = "cos_lockouts"
+
+
+class HvacMode(IntEnum):
+    """Thermostat operating mode (spec 2.1)."""
+
+    OFF = 1
+    HEAT = 2
+    COOL = 3
+    EMERGENCY_HEAT = 4
+    AUTO = 5
+
+
+class FanMode(IntEnum):
+    """Thermostat fan mode (spec 2.1)."""
+
+    ON = 1
+    AUTO = 2
+    CIRCULATE = 3
+
+
+class HoldType(IntEnum):
+    """Schedule hold type (spec 3.4)."""
+
+    DISABLED = 0
+    TEMPORARY = 1
+    PERMANENT = 2
+    AWAY = 3
+    VACATION = 4
+
+
+class SensorStatus(IntEnum):
+    """Sensor status (spec 5.1/5.2)."""
+
+    NO_ERROR = 0
+    OUT_OF_RANGE_LOW = 1
+    OUT_OF_RANGE_HIGH = 2
+    NOT_INSTALLED = 3
+    OPEN = 4
+    SHORT = 5
+
+
+class HeatingEquipmentStatus(IntEnum):
+    """Heating equipment status (spec 7.6 byte 0)."""
+
+    NOT_ACTIVE = 0
+    EQUIPMENT_WAIT = 1
+    STAGE_1 = 2
+    STAGE_1_AND_2 = 3
+    STAGE_1_2_AND_3 = 4
+    COMP_1 = 5
+    COMP_1_AND_2 = 6
+    AUX_HEAT_1 = 7
+    AUX_HEAT_2 = 8
+    COMP_1_ELEC_HEAT_1 = 9
+    COMP_1_ELEC_HEAT_2 = 10
+    COMP_1_AND_2_ELEC_HEAT_1 = 11
+    COMP_1_AND_2_ELEC_HEAT_2 = 12
+    ELEC_HEAT_1 = 13
+    ELEC_HEAT_2 = 14
+
+
+class CoolingEquipmentStatus(IntEnum):
+    """Cooling equipment status (spec 7.6 byte 1)."""
+
+    NOT_ACTIVE = 0
+    EQUIPMENT_WAIT = 1
+    STAGE_1 = 2
+    STAGE_1_AND_2 = 3
+    STAGE_1_2_AND_3 = 4
+    COMP_1 = 5
+    COMP_1_AND_2 = 6
+
+
+class FanStatus(IntEnum):
+    """Fan status (spec 7.6 byte 3)."""
+
+    NOT_ACTIVE = 0
+    ACTIVE = 1
+
+
+class DehumidificationStatus(IntEnum):
+    """Dehumidification status (spec 7.7 byte 0)."""
+
+    NOT_ACTIVE = 0
+    EQUIPMENT_WAIT = 1
+    WHOLE_HOME_ACTIVE = 2
+    OVERCOOLING_TO_DEHUMIDIFY = 3
+    OFF = 4
+
+
+class HumidificationStatus(IntEnum):
+    """Humidification status (spec 7.7 byte 1)."""
+
+    NOT_ACTIVE = 0
+    EQUIPMENT_WAIT = 1
+    ACTIVE = 2
+    OFF = 3
+
+
+class VentilationStatus(IntEnum):
+    """Ventilation status (spec 7.7 byte 2)."""
+
+    NOT_ACTIVE = 0
+    EQUIPMENT_WAIT = 1
+    ACTIVE = 2
+    HIGH_TEMPERATURE_LOCKOUT = 3
+    LOW_TEMPERATURE_LOCKOUT = 4
+    HIGH_RH_LOCKOUT = 5
+    OFF = 6
+
+
+class AirCleaningStatus(IntEnum):
+    """Air cleaning status (spec 7.7 byte 3)."""
+
+    NOT_ACTIVE = 0
+    EQUIPMENT_WAIT = 1
+    ACTIVE = 2
+    OFF = 3
+
+
+class ThermostatError(IntEnum):
+    """Thermostat error code (spec 7.8)."""
+
+    NO_ERROR = 0
+    E1_BUILT_IN_TEMP_SENSOR_OPEN = 1
+    E2_BUILT_IN_TEMP_SENSOR_SHORT = 2
+    E3_NON_VOLATILE_MEMORY_ACCESS_ERROR = 3
+    E4_RESERVED = 4
+    E5_ECM_COMMUNICATION_LOST = 5
+    E6_REMOTE_TEMP_SENSOR_OPEN = 6
+    E7_REMOTE_TEMP_SENSOR_SHORT = 7
+    E8_SUPPORT_MODULE_TEMP_LOST = 8
+
+
+class TemperatureScale(IntEnum):
+    """Temperature scale (spec 1.3)."""
+
+    FAHRENHEIT = 0
+    CELSIUS = 1
+
+
+class SimpleStatus(StrEnum):
+    """Application simple status collapse used by spec 7.6/7.7 (Idle/Wait/On/Off)."""
+
+    IDLE = "idle"
+    WAIT = "wait"
+    ON = "on"
+    OFF = "off"
+
+
+_HEATING_EQUIPMENT_SIMPLE_STATUS = {
+    HeatingEquipmentStatus.NOT_ACTIVE: SimpleStatus.IDLE,
+    HeatingEquipmentStatus.EQUIPMENT_WAIT: SimpleStatus.WAIT,
+    HeatingEquipmentStatus.STAGE_1: SimpleStatus.ON,
+    HeatingEquipmentStatus.STAGE_1_AND_2: SimpleStatus.ON,
+    HeatingEquipmentStatus.STAGE_1_2_AND_3: SimpleStatus.ON,
+    HeatingEquipmentStatus.COMP_1: SimpleStatus.ON,
+    HeatingEquipmentStatus.COMP_1_AND_2: SimpleStatus.ON,
+    HeatingEquipmentStatus.AUX_HEAT_1: SimpleStatus.ON,
+    HeatingEquipmentStatus.AUX_HEAT_2: SimpleStatus.ON,
+    HeatingEquipmentStatus.COMP_1_ELEC_HEAT_1: SimpleStatus.ON,
+    HeatingEquipmentStatus.COMP_1_ELEC_HEAT_2: SimpleStatus.ON,
+    HeatingEquipmentStatus.COMP_1_AND_2_ELEC_HEAT_1: SimpleStatus.ON,
+    HeatingEquipmentStatus.COMP_1_AND_2_ELEC_HEAT_2: SimpleStatus.ON,
+    HeatingEquipmentStatus.ELEC_HEAT_1: SimpleStatus.ON,
+    HeatingEquipmentStatus.ELEC_HEAT_2: SimpleStatus.ON,
+}
+
+_COOLING_EQUIPMENT_SIMPLE_STATUS = {
+    CoolingEquipmentStatus.NOT_ACTIVE: SimpleStatus.IDLE,
+    CoolingEquipmentStatus.EQUIPMENT_WAIT: SimpleStatus.WAIT,
+    CoolingEquipmentStatus.STAGE_1: SimpleStatus.ON,
+    CoolingEquipmentStatus.STAGE_1_AND_2: SimpleStatus.ON,
+    CoolingEquipmentStatus.STAGE_1_2_AND_3: SimpleStatus.ON,
+    CoolingEquipmentStatus.COMP_1: SimpleStatus.ON,
+    CoolingEquipmentStatus.COMP_1_AND_2: SimpleStatus.ON,
+}
+
+_FAN_SIMPLE_STATUS = {
+    FanStatus.NOT_ACTIVE: SimpleStatus.OFF,
+    FanStatus.ACTIVE: SimpleStatus.ON,
+}
+
+_DEHUMIDIFICATION_SIMPLE_STATUS = {
+    DehumidificationStatus.NOT_ACTIVE: SimpleStatus.IDLE,
+    DehumidificationStatus.EQUIPMENT_WAIT: SimpleStatus.IDLE,
+    DehumidificationStatus.WHOLE_HOME_ACTIVE: SimpleStatus.ON,
+    DehumidificationStatus.OVERCOOLING_TO_DEHUMIDIFY: SimpleStatus.ON,
+    DehumidificationStatus.OFF: SimpleStatus.OFF,
+}
+
+_HUMIDIFICATION_SIMPLE_STATUS = {
+    HumidificationStatus.NOT_ACTIVE: SimpleStatus.IDLE,
+    HumidificationStatus.EQUIPMENT_WAIT: SimpleStatus.IDLE,
+    HumidificationStatus.ACTIVE: SimpleStatus.ON,
+    HumidificationStatus.OFF: SimpleStatus.OFF,
+}
+
+_VENTILATION_SIMPLE_STATUS = {
+    VentilationStatus.NOT_ACTIVE: SimpleStatus.IDLE,
+    VentilationStatus.EQUIPMENT_WAIT: SimpleStatus.IDLE,
+    VentilationStatus.ACTIVE: SimpleStatus.ON,
+    VentilationStatus.HIGH_TEMPERATURE_LOCKOUT: SimpleStatus.IDLE,
+    VentilationStatus.LOW_TEMPERATURE_LOCKOUT: SimpleStatus.IDLE,
+    VentilationStatus.HIGH_RH_LOCKOUT: SimpleStatus.IDLE,
+    VentilationStatus.OFF: SimpleStatus.OFF,
+}
+
+_AIR_CLEANING_SIMPLE_STATUS = {
+    AirCleaningStatus.NOT_ACTIVE: SimpleStatus.IDLE,
+    AirCleaningStatus.EQUIPMENT_WAIT: SimpleStatus.IDLE,
+    AirCleaningStatus.ACTIVE: SimpleStatus.ON,
+    AirCleaningStatus.OFF: SimpleStatus.OFF,
+}
+
+_SIMPLE_STATUS_MAPS: dict[type, dict[int, SimpleStatus]] = {
+    HeatingEquipmentStatus: _HEATING_EQUIPMENT_SIMPLE_STATUS,
+    CoolingEquipmentStatus: _COOLING_EQUIPMENT_SIMPLE_STATUS,
+    FanStatus: _FAN_SIMPLE_STATUS,
+    DehumidificationStatus: _DEHUMIDIFICATION_SIMPLE_STATUS,
+    HumidificationStatus: _HUMIDIFICATION_SIMPLE_STATUS,
+    VentilationStatus: _VENTILATION_SIMPLE_STATUS,
+    AirCleaningStatus: _AIR_CLEANING_SIMPLE_STATUS,
+}
+
+
+def get_simple_status(
+    status: HeatingEquipmentStatus
+    | CoolingEquipmentStatus
+    | FanStatus
+    | DehumidificationStatus
+    | HumidificationStatus
+    | VentilationStatus
+    | AirCleaningStatus,
+) -> SimpleStatus:
+    """Collapse a spec 7.6/7.7 equipment/IAQ status value to its application simple
+    status (Idle/Wait/On/Off), per the parenthetical in those sections."""
+    return _SIMPLE_STATUS_MAPS[type(status)][int(status)]

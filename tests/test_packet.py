@@ -1,6 +1,25 @@
 import pytest
 
-from pyaprilaire.const import Action, Attribute, FunctionalDomain
+from pyaprilaire.const import (
+    Action,
+    AirCleaningStatus,
+    Attribute,
+    CoolingEquipmentStatus,
+    DehumidificationStatus,
+    FanMode,
+    FanStatus,
+    FunctionalDomain,
+    HeatingEquipmentStatus,
+    HoldType,
+    HumidificationStatus,
+    HvacMode,
+    SensorStatus,
+    SimpleStatus,
+    TemperatureScale,
+    ThermostatError,
+    VentilationStatus,
+    get_simple_status,
+)
 from pyaprilaire.packet import MAPPING, NackPacket, Packet
 
 # All 17 non-reserved status codes from spec section H.5. 0x00, 0x02 (Generic
@@ -1285,3 +1304,69 @@ def test_status_1_round_trip():
     packets: list[Packet] = list(Packet.parse(serialized))
 
     assert packets[0].data == data
+
+
+# --- Value enums (const.py) -------------------------------------------------
+
+
+def test_value_enums_are_int_compatible():
+    # Existing callers passing raw ints must keep working.
+    assert HvacMode.HEAT == 2
+    assert FanMode.AUTO == 2
+    assert HoldType.VACATION == 4
+    assert SensorStatus.SHORT == 5
+    assert HeatingEquipmentStatus.AUX_HEAT_1 == 7
+    assert CoolingEquipmentStatus.COMP_1_AND_2 == 6
+    assert FanStatus.ACTIVE == 1
+    assert DehumidificationStatus.OVERCOOLING_TO_DEHUMIDIFY == 3
+    assert HumidificationStatus.OFF == 3
+    assert VentilationStatus.HIGH_RH_LOCKOUT == 5
+    assert AirCleaningStatus.ACTIVE == 2
+    assert ThermostatError.E5_ECM_COMMUNICATION_LOST == 5
+    assert TemperatureScale.CELSIUS == 1
+
+    # Values decoded off the wire as bare ints still round-trip through the
+    # enum, e.g. a MAPPING-decoded Attribute.HEATING_EQUIPMENT_STATUS value.
+    assert HeatingEquipmentStatus(7) == HeatingEquipmentStatus.AUX_HEAT_1
+
+
+def test_get_simple_status_heating():
+    assert get_simple_status(HeatingEquipmentStatus.NOT_ACTIVE) == SimpleStatus.IDLE
+    assert get_simple_status(HeatingEquipmentStatus.EQUIPMENT_WAIT) == SimpleStatus.WAIT
+    assert get_simple_status(HeatingEquipmentStatus.AUX_HEAT_1) == SimpleStatus.ON
+
+
+def test_get_simple_status_cooling():
+    assert get_simple_status(CoolingEquipmentStatus.NOT_ACTIVE) == SimpleStatus.IDLE
+    assert get_simple_status(CoolingEquipmentStatus.STAGE_1) == SimpleStatus.ON
+
+
+def test_get_simple_status_fan():
+    assert get_simple_status(FanStatus.NOT_ACTIVE) == SimpleStatus.OFF
+    assert get_simple_status(FanStatus.ACTIVE) == SimpleStatus.ON
+
+
+def test_get_simple_status_dehumidification():
+    assert (
+        get_simple_status(DehumidificationStatus.WHOLE_HOME_ACTIVE) == SimpleStatus.ON
+    )
+    assert get_simple_status(DehumidificationStatus.OFF) == SimpleStatus.OFF
+
+
+def test_get_simple_status_ventilation():
+    assert get_simple_status(VentilationStatus.ACTIVE) == SimpleStatus.ON
+    assert (
+        get_simple_status(VentilationStatus.HIGH_TEMPERATURE_LOCKOUT)
+        == SimpleStatus.IDLE
+    )
+    assert get_simple_status(VentilationStatus.OFF) == SimpleStatus.OFF
+
+
+def test_get_simple_status_does_not_collide_across_enums():
+    # Different status enums that share the same raw int value (e.g. 0 for
+    # "not active") must not collide in the simple-status lookup, since
+    # IntEnum members compare/hash equal to plain ints of the same value
+    # across unrelated enum classes.
+    assert get_simple_status(HeatingEquipmentStatus.NOT_ACTIVE) == SimpleStatus.IDLE
+    assert get_simple_status(FanStatus.NOT_ACTIVE) == SimpleStatus.OFF
+    assert get_simple_status(DehumidificationStatus.NOT_ACTIVE) == SimpleStatus.IDLE
