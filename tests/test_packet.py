@@ -929,9 +929,10 @@ def test_serialize_setup_1_away_available_only_null_padding():
 
 
 def test_serialize_identification_2_mac_address_only_no_null_needed():
-    # Concretely quoted in the defect report: a fully-populated
-    # Identification/2 write (the only mapped field) must keep working
-    # unchanged.
+    # Identification/2 maps MAC_ADDRESS plus FORCE_CONNECTION and
+    # CONNECTION_TYPE (each a single null-padded byte when absent). A
+    # write that only populates MAC_ADDRESS must keep working unchanged
+    # and null-pad the other two.
     serialized = Packet(
         Action.READ_RESPONSE,
         FunctionalDomain.IDENTIFICATION,
@@ -943,13 +944,13 @@ def test_serialize_identification_2_mac_address_only_no_null_needed():
 
     payload = serialized[4:-1]
 
-    assert len(payload) == 9  # action, fd, attr + 6 MAC bytes
-    assert list(payload[3:]) == [1, 2, 3, 4, 5, 6]
+    assert len(payload) == 11  # action, fd, attr + 6 MAC bytes + 2 null
+    assert list(payload[3:]) == [1, 2, 3, 4, 5, 6, 0, 0]
 
 
 def test_serialize_mac_address_null_occupies_six_bytes():
     # A null MAC_ADDRESS (absent from data) must still occupy all 6 bytes,
-    # not be skipped or raise.
+    # not be skipped or raise, alongside the two other null-padded fields.
     serialized = Packet(
         Action.READ_RESPONSE,
         FunctionalDomain.IDENTIFICATION,
@@ -961,8 +962,8 @@ def test_serialize_mac_address_null_occupies_six_bytes():
 
     payload = serialized[4:-1]
 
-    assert len(payload) == 9
-    assert list(payload[3:]) == [0] * 6
+    assert len(payload) == 11
+    assert list(payload[3:]) == [0] * 8
 
 
 def test_serialize_spec_section_g_worked_example_unchanged():
