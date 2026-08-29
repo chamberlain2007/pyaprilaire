@@ -297,12 +297,19 @@ class Packet:
 
             try:
                 action = Action(action)
-                functional_domain = FunctionalDomain(functional_domain)
             except ValueError:
                 data_index += count + 5
                 continue
 
             if action == Action.NACK:
+                # Per spec section G, byte 5 of the payload is
+                # "FUNCTIONAL DOMAIN / STATUS CODE" - for a NACK it is a
+                # section H.5 status code (0x00-0xFF), not a
+                # FunctionalDomain member. It must not be coerced through
+                # FunctionalDomain, which only defines a subset of that
+                # range and would otherwise cause valid NACK frames
+                # carrying an out-of-range status code to be silently
+                # dropped.
                 nack_attribute = int(data[data_index + 5])
 
                 crc_index = data_index + 4 + count
@@ -312,6 +319,12 @@ class Packet:
                 ):
                     yield NackPacket(nack_attribute)
 
+                data_index += count + 5
+                continue
+
+            try:
+                functional_domain = FunctionalDomain(functional_domain)
+            except ValueError:
                 data_index += count + 5
                 continue
 

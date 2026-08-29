@@ -1,5 +1,31 @@
+import pytest
+
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import NackPacket, Packet
+
+# All 17 non-reserved status codes from spec section H.5. 0x00, 0x02 (Generic
+# group) and the bare 0xFF marker's own value are technically "Reserved" /
+# "Extended", but 0xFF is included here as a status code value like the
+# others per the H.5 table; 0x00 and 0x02 are omitted as genuinely reserved.
+NACK_STATUS_CODES = [
+    0x01,  # Generic Error
+    0x03,  # Buffer Full or Device Busy
+    0x04,  # Unsupported protocol revision
+    0x05,  # Unknown Action
+    0x06,  # Unknown Functional Domain
+    0x07,  # Unknown Attribute
+    0x08,  # Cannot accept writes in current application mode
+    0x09,  # Timed out waiting for response
+    0x0A,  # Unsupported Model
+    0x10,  # Value out of range
+    0x11,  # Attribute Read Only
+    0x12,  # Attribute not writeable in current configuration
+    0x13,  # Incorrect number of data bytes (write)
+    0x20,  # Attribute not readable (write only)
+    0x21,  # Attribute not available - try later
+    0x22,  # Incorrect number of data bytes (read)
+    0xFF,  # Extended
+]
 
 
 def test_invalid_action():
@@ -196,6 +222,76 @@ def test_nack_invalid_crc_and_mismatched_attribute_rejected():
             [0x01, 0x80, 0x00, 0x07, 0x03, 0x07, 0x06, 0x02, 0x00, 0x01, 0x01, 0x00]
         )
     )
+
+    assert packets == []
+
+
+@pytest.mark.parametrize("status_code", NACK_STATUS_CODES)
+def test_nack_status_code_parse(status_code):
+    # Regression test: byte 5 of a NACK payload (spec section G, "FUNCTIONAL
+    # DOMAIN / STATUS CODE") used to be coerced through FunctionalDomain
+    # before the NACK branch was reached. FunctionalDomain only defines a
+    # subset of 0x00-0xFF, so any status code outside that set (e.g. 0x11,
+    # a Write-rejection code) raised ValueError and the whole frame was
+    # silently discarded. Every status code in spec section H.5 must yield
+    # a NackPacket carrying that exact code.
+    frame = [0x01, 0x80, 0x00, 0x02, 0x06, status_code]
+    frame.append(Packet._generate_crc(frame))
+
+    packets: list[Packet] = list(Packet.parse(frame))
+
+    assert len(packets) == 1
+    assert isinstance(packets[0], NackPacket)
+    assert packets[0].nack_attribute == status_code
+
+
+def test_nack_status_code_outside_functional_domain_range_invalid_crc_rejected():
+    # A status code that falls outside FunctionalDomain's defined values
+    # (0x11 - Attribute Read Only) must still be rejected when the CRC is
+    # wrong, proving the fix does not simply accept the byte unconditionally.
+    frame = [0x01, 0x80, 0x00, 0x02, 0x06, 0x11, 0x00]
+
+    assert Packet._generate_crc(frame[:-1]) != frame[-1]
+
+    packets: list[Packet] = list(Packet.parse(frame))
+
+    assert packets == []
+
+
+def test_nack_status_code_outside_functional_domain_range_no_desync():
+    # A NACK carrying a status code outside FunctionalDomain's range
+    # (previously dropped entirely) must not desynchronize the stream: a
+    # valid frame immediately following it must still be parsed.
+    nack_frame = [0x01, 0x80, 0x00, 0x02, 0x06, 0x11]
+    nack_frame.append(Packet._generate_crc(nack_frame))
+
+    valid_frame = [1, 1, 0, 3, 2, 1, 1, 107]
+
+    packets: list[Packet] = list(Packet.parse(nack_frame + valid_frame))
+
+    assert len(packets) == 2
+    assert isinstance(packets[0], NackPacket)
+    assert packets[0].nack_attribute == 0x11
+    assert packets[1].action == Action.READ_REQUEST
+    assert packets[1].functional_domain == FunctionalDomain.SETUP
+    assert packets[1].attribute == 1
+
+
+def test_unknown_non_nack_functional_domain_still_skipped():
+    # Regression guard: splitting the single Action/FunctionalDomain try
+    # block into two (so NACK status codes bypass FunctionalDomain
+    # coercion) must not change behavior for non-NACK actions - an unknown
+    # functional domain must still cause the frame to be skipped via the
+    # count + 5 resync, not crash or otherwise be treated as a NACK.
+    packets: list[Packet] = list(Packet.parse([1, 1, 0, 3, 3, 17, 1, 0]))
+
+    assert packets == []
+
+
+def test_unknown_action_still_skipped():
+    # Regression guard: an unrecognized action byte must still be skipped
+    # via the count + 5 resync, not crash.
+    packets: list[Packet] = list(Packet.parse([1, 1, 0, 3, 7, 1, 1, 0]))
 
     assert packets == []
 
