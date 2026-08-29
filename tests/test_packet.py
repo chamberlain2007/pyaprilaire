@@ -102,6 +102,31 @@ def test_packet_multiple_attribute():
     assert packet.attribute == 4
 
 
+def test_count_decoded_high_byte_first():
+    # Regression test for a CNT decoded with the wrong shift (packet.py count
+    # calculation). Spec section F, note 4: CNT is sent high byte first, so a
+    # payload of 300 bytes must be encoded as CNT = 0x01, 0x2C. A payload this
+    # large only exists in a currently-mapped attribute (Control/1) if we pad
+    # it with trailing bytes past the mapped fields, which real devices do
+    # (see the trailing bytes in test_nack_and_packet_parse).
+    header = [1, 1, 1, 44]  # REV, SEQ, CNT high (1), CNT low (44) -> count=300
+    payload = [3, 2, 1, 1, 2, 10, 20] + [0] * 293  # ACTION, FD, ATTR, data..., padding
+    assert len(payload) == 300
+
+    frame = header + payload
+    frame.append(Packet._generate_crc(frame))
+
+    packets: list[Packet] = list(Packet.parse(frame))
+
+    assert len(packets) == 1
+    assert packets[0].data == {
+        Attribute.MODE: 1,
+        Attribute.FAN_MODE: 2,
+        Attribute.HEAT_SETPOINT: 10,
+        Attribute.COOL_SETPOINT: 20,
+    }
+
+
 def test_nack_parse():
     packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0]))
 

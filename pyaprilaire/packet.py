@@ -288,7 +288,7 @@ class Packet:
         while data_index < len(data):
             revision = data[data_index]
             sequence = data[data_index + 1]
-            count = data[data_index + 2] << 2 | data[data_index + 3]
+            count = data[data_index + 2] << 8 | data[data_index + 3]
 
             action = int(data[data_index + 4])
             functional_domain = int(data[data_index + 5])
