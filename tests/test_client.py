@@ -73,6 +73,47 @@ async def test_protocol_queue_loop(protocol: _AprilaireClientProtocol):
     assert protocol.transport.write.call_count == 2
 
 
+async def test_protocol_queue_loop_continues_after_serialize_error(
+    protocol: _AprilaireClientProtocol,
+):
+    """A packet that fails to serialize should be dropped, not kill the loop"""
+
+    # A wrong-typed value makes serialize() raise a TypeError. Note this
+    # deliberately does not use a *missing* value: an absent field is a
+    # legal partial write per spec section G ("when NULL is written the
+    # corresponding value will not be modified"), and is serialized as a
+    # null byte rather than raising. Only a genuinely malformed value
+    # exercises the failure path this test is about.
+    bad_packet = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        3,
+        data={Attribute.DEHUMIDIFICATION_SETPOINT: "not-an-integer"},
+    )
+
+    await protocol._send_packet(bad_packet)
+
+    sleep_mock = AsyncMock()
+    protocol.transport = Mock(asyncio.Transport)
+
+    with patch("asyncio.sleep", new=sleep_mock):
+        await protocol._queue_loop(loop_count=1)
+
+    # The loop kept running (no exception escaped) and the bad packet was
+    # dropped rather than written
+    assert sleep_mock.call_count == 1
+    assert protocol.transport.write.call_count == 0
+
+    # A subsequently queued, valid packet is still sent on a later tick
+    await protocol.set_hold(0)
+
+    with patch("asyncio.sleep", new=sleep_mock):
+        await protocol._queue_loop(loop_count=1)
+
+    assert sleep_mock.call_count == 2
+    assert protocol.transport.write.call_count == 1
+
+
 def test_protocol_data_received(protocol: _AprilaireClientProtocol):
     protocol.data_received(bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]))
 
