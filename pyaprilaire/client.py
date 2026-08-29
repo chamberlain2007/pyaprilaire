@@ -62,6 +62,106 @@ class NackError(Exception):
         )
 
 
+# How long to wait for a COS Subscriptions read response (spec 7.1) before
+# giving up and falling back to writing the desired mask unconditionally.
+# Matches the timeout AprilaireClient.test_connection() uses for a similar
+# single read/response round trip.
+COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
+
+# Spec 7.1: the 29 COS Subscription bytes, in wire order, paired with this
+# library's desired subscription value for each.
+#
+# Per spec Appendix J.1: "All COS subscription outputs are enabled by
+# default, but can be disabled if unused to reduce network traffic." The
+# safest general position is that the device's all-enabled default is
+# already a superset of what this library needs, so every byte below stays
+# enabled (1) unless a concrete reason to disable it exists - none do. A
+# caller that knows its own traffic budget can disable individual channels
+# via the `overrides` argument to `configure_cos`.
+#
+# Notes on specific bytes:
+#   5-9   Setpoint/mode, dehumidification, humidification, fresh air, and
+#         air cleaning settings back update_mode()/update_fan_mode()/
+#         update_setpoint()/set_dehumidification_setpoint()/
+#         set_humidification_setpoint()/set_fresh_air()/set_air_cleaning().
+#   10    Backs read_thermostat_iaq_available().
+#   11    Schedule Settings - without this, set_hold()/read_scheduling()
+#         are never told whether the user enabled/disabled the onboard
+#         schedule at the thermostat.
+#   12    Away Settings - matches the spec default. Note SCHEDULING/2 has
+#         no packet.py MAPPING entry yet, so these COS packets are
+#         currently parsed off the wire and dropped (see PR notes).
+#   14    Schedule Hold backs set_hold()/read_scheduling().
+#   16    Service Reminders Status - spec J.18: the only channel to
+#         monitor service reminder status.
+#   17-18 Alerts Status/Settings - spec J.19: the only channel for hi/lo
+#         temperature and RH alerts.
+#   20    Thermostat Location & Name backs read_thermostat_name().
+#   21    Reserved - spec 7.1 defines no semantics for this byte. Paired
+#         with `None` instead of an Attribute: it never enters the
+#         current-vs-desired comparison in `configure_cos`, and the 0
+#         below is only ever sent as a structurally-required placeholder
+#         byte on a write triggered by some other channel's mismatch -
+#         never because byte 21 itself was judged wrong.
+#   22    Controlling Sensor Values backs read_sensors().
+#   23    Over the air ODT update timeout - spec J.15: the only
+#         notification that a written ODT
+#         (set_written_outdoor_temperature_value()) is more than 10
+#         minutes stale.
+#   24-25 Thermostat/IAQ Status back read_thermostat_status()/
+#         read_iaq_status().
+COS_SUBSCRIPTIONS = [
+    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 1),  # 0 Installer Thermostat Settings
+    (Attribute.COS_CONTRACTOR_INFORMATION, 1),  # 1 Contractor Information
+    (
+        Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS,
+        1,
+    ),  # 2 Air Cleaning Installer Variable
+    (
+        Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS,
+        1,
+    ),  # 3 Humidity Control Installer Settings
+    (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, 1),  # 4 Fresh Air Installer Settings
+    (
+        Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
+        1,
+    ),  # 5 Thermostat Setpoint & Mode Settings
+    (Attribute.COS_DEHUMIDIFICATION_SETPOINT, 1),  # 6 Dehumidification Setpoint
+    (Attribute.COS_HUMIDIFICATION_SETPOINT, 1),  # 7 Humidification Setpoint
+    (Attribute.COS_FRESH_AIR_SETTING, 1),  # 8 Fresh Air Setting
+    (Attribute.COS_AIR_CLEANING_SETTINGS, 1),  # 9 Air Cleaning Settings
+    (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, 1),  # 10 Thermostat IAQ Available
+    (Attribute.COS_SCHEDULE_SETTINGS, 1),  # 11 Schedule Settings
+    (Attribute.COS_AWAY_SETTINGS, 1),  # 12 Away Settings
+    (Attribute.COS_SCHEDULE_DAY, 1),  # 13 Schedule Day
+    (Attribute.COS_SCHEDULE_HOLD, 1),  # 14 Schedule Hold
+    (Attribute.COS_HEAT_BLAST, 1),  # 15 Heat Blast
+    (Attribute.COS_SERVICE_REMINDERS_STATUS, 1),  # 16 Service Reminders Status
+    (Attribute.COS_ALERTS_STATUS, 1),  # 17 Alerts Status
+    (Attribute.COS_ALERTS_SETTINGS, 1),  # 18 Alerts Settings
+    (Attribute.COS_BACKLIGHT_SETTINGS, 1),  # 19 Backlight Settings
+    (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, 1),  # 20 Thermostat Location & Name
+    (None, 0),  # 21 Reserved
+    (Attribute.COS_CONTROLLING_SENSOR_VALUES, 1),  # 22 Controlling Sensor Values
+    (
+        Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,
+        1,
+    ),  # 23 Over the air ODT update timeout
+    (Attribute.COS_THERMOSTAT_STATUS, 1),  # 24 Thermostat Status
+    (Attribute.COS_IAQ_STATUS, 1),  # 25 IAQ Status
+    (Attribute.COS_MODEL_AND_REVISION, 1),  # 26 Model & Revision
+    (Attribute.COS_SUPPORT_MODULE, 1),  # 27 Support Module
+    (Attribute.COS_LOCKOUTS, 1),  # 28 Lockouts
+]
+
+# The desired mask as a dict, for comparing against a read current mask and
+# for seeding `configure_cos`'s `overrides` merge. Excludes byte 21 (Reserved
+# has no Attribute) so it can never be looked up or overridden.
+DEFAULT_COS_SUBSCRIPTIONS: dict[Attribute, int] = {
+    attribute: value for attribute, value in COS_SUBSCRIPTIONS if attribute is not None
+}
+
+
 class _AprilaireClientProtocol(asyncio.Protocol):
     """Protocol for interacting with the thermostat over socket connection"""
 
@@ -72,11 +172,23 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         ],
         reconnect_action: Callable[[], None],
         logger: Logger,
+        wait_for_response_action: Callable[[FunctionalDomain, int, int], Any]
+        | None = None,
     ) -> None:
         """Initialize the protocol"""
         self.data_received_callback = data_received_callback
         self.reconnect_action = reconnect_action
         self.logger = logger
+
+        # Bound to AprilaireClient.wait_for_response by
+        # AprilaireClient.create_protocol() so configure_cos() can read the
+        # current COS mask (spec 7.1) before deciding whether to write a new
+        # one (spec Appendix J.1), without this class needing its own copy
+        # of the futures-based request/response correlation that already
+        # lives on AprilaireClient. None when a caller constructs this
+        # protocol directly (e.g. tests) - configure_cos() then falls back
+        # to writing unconditionally, matching its previous behavior.
+        self.wait_for_response_action = wait_for_response_action
 
         self.transport: asyncio.Transport = None
 
@@ -175,9 +287,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         await self.read_mac_address()
         await self.read_thermostat_status()
+        await self.read_iaq_status()  # spec Appendix J.13
         await self.read_control()
+        await self.read_thermostat_iaq_available()  # spec Appendix J.4
         await self.read_sensors()
         await self.read_thermostat_name()
+        await self.read_scheduling()  # spec Appendix J.11
         await self.configure_cos()
         await self.read_dehumidification_setpoint()
         await self.read_humidification_setpoint()
@@ -532,44 +647,71 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
         )
 
-    async def configure_cos(self):
-        """Send a request to configure the COS settings"""
+    async def read_cos_subscriptions(self):
+        """Send a request to read the current COS subscription settings (spec 7.1)"""
+        await self._send_packet(Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 1))
+
+    async def configure_cos(self, overrides: dict[Attribute, int] | None = None):
+        """Configure which COS subscriptions (spec 7.1) the thermostat sends.
+
+        Per spec Appendix J.1, the recommended sequence is: "Use the COS
+        Subscriptions attribute to read the current COS subscription
+        settings" and then, only "if it is desired to enable or [disable]
+        specific COS messages", write the new settings. The mask is device
+        configuration (spec 7.1 calls it read/write, not a one-shot
+        command), so writing it unconditionally on every connect - including
+        the hourly reconnect - means roughly 24 needless writes a day, and
+        risks clobbering a mask some other tool set on purpose. This method
+        reads first and only writes when the desired mask actually differs
+        from what the thermostat reports.
+
+        `overrides` lets a caller adjust individual channels away from this
+        library's defaults (`DEFAULT_COS_SUBSCRIPTIONS`) - for example to
+        disable a channel it doesn't use to reduce network traffic, per spec
+        Appendix J.1. Byte 21 is Reserved (spec 7.1 defines no semantics for
+        it) and is never part of the desired mask, so it can't be set here.
+
+        If no `wait_for_response_action` was supplied (see `__init__`), the
+        read can't be awaited, so this falls back to writing the desired
+        mask unconditionally - matching this method's previous behavior.
+        """
+        desired = dict(DEFAULT_COS_SUBSCRIPTIONS)
+
+        if overrides:
+            desired.update(
+                {
+                    attribute: value
+                    for attribute, value in overrides.items()
+                    if attribute in desired
+                }
+            )
+
+        if self.wait_for_response_action is not None:
+            await self.read_cos_subscriptions()
+
+            current = await self.wait_for_response_action(
+                FunctionalDomain.STATUS, 1, COS_SUBSCRIPTIONS_READ_TIMEOUT
+            )
+
+            if current is not None and all(
+                current.get(attribute) == value for attribute, value in desired.items()
+            ):
+                self.logger.debug(
+                    "COS subscriptions already match the desired state; skipping write"
+                )
+                return
+
+        raw_data = [
+            0 if attribute is None else desired[attribute]
+            for attribute, _default in COS_SUBSCRIPTIONS
+        ]
+
         await self._send_packet(
             Packet(
                 Action.WRITE,
                 FunctionalDomain.STATUS,
                 1,
-                raw_data=[
-                    1,  # Installer Thermostat Settings
-                    0,  # Contractor Information
-                    0,  # Air Cleaning Installer Variable
-                    0,  # Humidity Control Installer Settings
-                    0,  # Fresh Air Installer Settings
-                    1,  # Thermostat Setpoint & Mode Settings
-                    1,  # Dehumidification Setpoint
-                    1,  # Humidification Setpoint
-                    1,  # Fresh Air Settings
-                    1,  # Air Cleaning Settings
-                    1,  # Thermostat IAQ Available
-                    0,  # Schedule Settings
-                    1,  # Away Settings
-                    0,  # Schedule Day
-                    1,  # Schedule Hold
-                    0,  # Heat Blast
-                    0,  # Service Reminders Status
-                    0,  # Alerts Status
-                    0,  # Alerts Settings
-                    0,  # Backlight Settings
-                    1,  # Thermostat Location & Name
-                    0,  # Reserved
-                    1,  # Controlling Sensor Values
-                    0,  # Over the air ODT update timeout
-                    1,  # Thermostat Status
-                    1,  # IAQ Status
-                    1,  # Model & Revision
-                    0,  # Support Module
-                    0,  # Lockouts
-                ],
+                raw_data=raw_data,
             )
         )
 
@@ -669,7 +811,10 @@ class AprilaireClient(SocketClient):
 
     def create_protocol(self):
         return _AprilaireClientProtocol(
-            self.data_received, self._reconnect_with_delay, self.logger
+            self.data_received,
+            self._reconnect_with_delay,
+            self.logger,
+            self.wait_for_response,
         )
 
     async def data_received(
@@ -974,3 +1119,19 @@ class AprilaireClient(SocketClient):
         return await self.wait_for_response(
             FunctionalDomain.STATUS, 7, timeout, sequence=sequence
         )
+
+    async def read_cos_subscriptions(self):
+        """Send a request to read the current COS subscription settings (spec 7.1)"""
+        await self.protocol.read_cos_subscriptions()
+
+    async def configure_cos(self, overrides: dict[Attribute, int] | None = None):
+        """Configure which COS subscriptions (spec 7.1) the thermostat sends.
+
+        Reads the current mask first and only writes the desired mask if it
+        differs. `overrides` lets a caller adjust individual channels away
+        from this library's defaults - see
+        `_AprilaireClientProtocol.configure_cos` for the full rationale and
+        `pyaprilaire.client.DEFAULT_COS_SUBSCRIPTIONS` for the defaults
+        themselves.
+        """
+        await self.protocol.configure_cos(overrides)

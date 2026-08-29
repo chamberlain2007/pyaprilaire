@@ -5,7 +5,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from pyaprilaire.client import AprilaireClient, NackError, _AprilaireClientProtocol
+from pyaprilaire.client import (
+    COS_SUBSCRIPTIONS,
+    COS_SUBSCRIPTIONS_READ_TIMEOUT,
+    DEFAULT_COS_SUBSCRIPTIONS,
+    AprilaireClient,
+    NackError,
+    _AprilaireClientProtocol,
+)
 from pyaprilaire.const import Action, Attribute, FunctionalDomain, NackStatus
 from pyaprilaire.packet import Packet
 
@@ -55,7 +62,12 @@ async def test_protocol_update_status(protocol: _AprilaireClientProtocol):
     with patch("asyncio.sleep", new=sleep_mock):
         await protocol._update_status()
 
-    assert protocol.packet_queue.qsize() == 9
+    # mac_address, thermostat_status, iaq_status, control,
+    # thermostat_iaq_available, sensors, thermostat_name, scheduling,
+    # configure_cos (no wait_for_response_action, so it writes
+    # unconditionally without a preceding read), dehumidification_setpoint,
+    # humidification_setpoint, sync.
+    assert protocol.packet_queue.qsize() == 12
     assert sleep_mock.call_count == 1
 
 
@@ -512,8 +524,182 @@ async def test_protocol_sync(protocol: _AprilaireClientProtocol):
     )
 
 
+def _expected_cos_raw_data(overrides: dict[Attribute, int] | None = None) -> list[int]:
+    desired = dict(DEFAULT_COS_SUBSCRIPTIONS)
+
+    if overrides:
+        desired.update(overrides)
+
+    return [
+        0 if attribute is None else desired[attribute]
+        for attribute, _ in COS_SUBSCRIPTIONS
+    ]
+
+
+async def test_protocol_read_cos_subscriptions(protocol: _AprilaireClientProtocol):
+    await protocol.read_cos_subscriptions()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 1)
+    )
+
+
 async def test_protocol_configure_cos(protocol: _AprilaireClientProtocol):
-    pass
+    # No wait_for_response_action was supplied (the `protocol` fixture
+    # constructs it with only the first three positional args), so there is
+    # no way to await a read response - configure_cos() falls back to
+    # writing the desired mask unconditionally, matching its previous
+    # behavior for backward compatibility.
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+
+    packet = queue_items[0]
+
+    assert packet.action == Action.WRITE
+    assert packet.functional_domain == FunctionalDomain.STATUS
+    assert packet.attribute == 1
+    assert len(packet.raw_data) == 29
+    assert packet.raw_data == _expected_cos_raw_data()
+
+
+async def test_protocol_configure_cos_reads_before_writing(logger):
+    wait_for_response_action = AsyncMock(return_value=None)
+
+    protocol = _AprilaireClientProtocol(
+        AsyncMock(), AsyncMock(), logger, wait_for_response_action
+    )
+
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 2
+
+    assert queue_items[0].action == Action.READ_REQUEST
+    assert queue_items[0].functional_domain == FunctionalDomain.STATUS
+    assert queue_items[0].attribute == 1
+
+    assert queue_items[1].action == Action.WRITE
+    assert queue_items[1].functional_domain == FunctionalDomain.STATUS
+    assert queue_items[1].attribute == 1
+
+    wait_for_response_action.assert_called_once_with(
+        FunctionalDomain.STATUS, 1, COS_SUBSCRIPTIONS_READ_TIMEOUT
+    )
+
+
+async def test_protocol_configure_cos_skips_write_when_matching(logger):
+    # The thermostat already reports exactly the desired mask (e.g. it's
+    # still at its factory default, per spec 7.1's "Default settings are in
+    # bold") - no write should be issued.
+    wait_for_response_action = AsyncMock(return_value=dict(DEFAULT_COS_SUBSCRIPTIONS))
+
+    protocol = _AprilaireClientProtocol(
+        AsyncMock(), AsyncMock(), logger, wait_for_response_action
+    )
+
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+    assert queue_items[0].action == Action.READ_REQUEST
+
+
+async def test_protocol_configure_cos_writes_when_mismatched(logger):
+    current = dict(DEFAULT_COS_SUBSCRIPTIONS)
+    current[Attribute.COS_HEAT_BLAST] = 0
+
+    wait_for_response_action = AsyncMock(return_value=current)
+
+    protocol = _AprilaireClientProtocol(
+        AsyncMock(), AsyncMock(), logger, wait_for_response_action
+    )
+
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 2
+
+    write_packet = queue_items[1]
+
+    assert write_packet.action == Action.WRITE
+    assert len(write_packet.raw_data) == 29
+    assert write_packet.raw_data == _expected_cos_raw_data()
+
+
+async def test_protocol_configure_cos_reserved_byte_never_forced(logger):
+    # The real parser (packet.py) drops the Reserved byte 21 entirely, so a
+    # read response never carries a key for it - that must not be treated
+    # as a mismatch that triggers a write.
+    current = dict(DEFAULT_COS_SUBSCRIPTIONS)
+
+    assert None not in current
+
+    wait_for_response_action = AsyncMock(return_value=current)
+
+    protocol = _AprilaireClientProtocol(
+        AsyncMock(), AsyncMock(), logger, wait_for_response_action
+    )
+
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+
+
+async def test_protocol_configure_cos_reserved_byte_is_placeholder_zero(
+    protocol: _AprilaireClientProtocol,
+):
+    await protocol.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert queue_items[0].raw_data[21] == 0
+
+
+def test_cos_subscriptions_is_29_bytes_in_spec_order():
+    assert len(COS_SUBSCRIPTIONS) == 29
+    assert COS_SUBSCRIPTIONS[21][0] is None
+
+
+def test_cos_subscriptions_previously_disabled_dependent_channels_now_enabled():
+    # These channels back library functionality and used to be written as
+    # disabled unconditionally on every connect - see PR description.
+    for attribute in (
+        Attribute.COS_SERVICE_REMINDERS_STATUS,  # spec J.18
+        Attribute.COS_ALERTS_STATUS,  # spec J.19
+        Attribute.COS_ALERTS_SETTINGS,  # spec J.19
+        Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,  # spec J.15
+    ):
+        assert DEFAULT_COS_SUBSCRIPTIONS[attribute] == 1
+
+
+async def test_protocol_configure_cos_overrides(protocol: _AprilaireClientProtocol):
+    await protocol.configure_cos(overrides={Attribute.COS_HEAT_BLAST: 0})
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert queue_items[0].raw_data == _expected_cos_raw_data(
+        {Attribute.COS_HEAT_BLAST: 0}
+    )
+
+
+async def test_protocol_configure_cos_overrides_ignore_unmapped_attributes(
+    protocol: _AprilaireClientProtocol,
+):
+    # An override for something outside the COS mask (or the Reserved byte,
+    # which has no Attribute) is silently ignored rather than raising.
+    await protocol.configure_cos(overrides={Attribute.MODE: 5})
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert queue_items[0].raw_data == _expected_cos_raw_data()
 
 
 async def test_protocol_read_mac_address(protocol: _AprilaireClientProtocol):
@@ -839,7 +1025,49 @@ async def test_client_sync(client: AprilaireClient, protocol: _AprilaireClientPr
 async def test_client_configure_cos(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
-    pass
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+
+    packet = queue_items[0]
+
+    assert packet.action == Action.WRITE
+    assert packet.functional_domain == FunctionalDomain.STATUS
+    assert packet.attribute == 1
+    assert packet.raw_data == _expected_cos_raw_data()
+
+
+async def test_client_configure_cos_reads_before_writing(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    protocol.wait_for_response_action = AsyncMock(
+        return_value=dict(DEFAULT_COS_SUBSCRIPTIONS)
+    )
+
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+    assert queue_items[0].action == Action.READ_REQUEST
+
+
+async def test_client_read_cos_subscriptions(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_cos_subscriptions()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 1)
+    )
+
+
+def test_client_create_protocol_wires_wait_for_response(client: AprilaireClient):
+    created_protocol = client.create_protocol()
+
+    assert created_protocol.wait_for_response_action == client.wait_for_response
 
 
 async def test_client_read_mac_address(
