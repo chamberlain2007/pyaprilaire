@@ -78,13 +78,17 @@ async def test_protocol_queue_loop_continues_after_serialize_error(
 ):
     """A packet that fails to serialize should be dropped, not kill the loop"""
 
-    # This packet is missing its required DEHUMIDIFICATION_SETPOINT value, so
-    # serialize() raises a TypeError
+    # A wrong-typed value makes serialize() raise a TypeError. Note this
+    # deliberately does not use a *missing* value: an absent field is a
+    # legal partial write per spec section G ("when NULL is written the
+    # corresponding value will not be modified"), and is serialized as a
+    # null byte rather than raising. Only a genuinely malformed value
+    # exercises the failure path this test is about.
     bad_packet = Packet(
         Action.WRITE,
         FunctionalDomain.CONTROL,
         3,
-        data={},
+        data={Attribute.DEHUMIDIFICATION_SETPOINT: "not-an-integer"},
     )
 
     await protocol._send_packet(bad_packet)
