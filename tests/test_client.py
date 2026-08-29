@@ -160,9 +160,7 @@ def test_protocol_data_received_parse_exception_does_not_propagate(
     # Regression guard: asyncio's transport treats any exception escaping
     # data_received as fatal and closes the connection, so a failure while
     # buffering/parsing must be logged and swallowed, not raised.
-    with patch.object(
-        protocol, "_parse_received_data", side_effect=ValueError("boom")
-    ):
+    with patch.object(protocol, "_parse_received_data", side_effect=ValueError("boom")):
         protocol.data_received(bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]))
 
     assert protocol.data_received_callback.call_count == 0
