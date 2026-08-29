@@ -44,13 +44,13 @@ packaging==26.3
     #   pytest
 pip-tools==7.6.1
     # via pyaprilaire (pyproject.toml)
-platformdirs==4.11.2
+platformdirs==4.11.4
     # via virtualenv
 pluggy==1.6.0
     # via pytest
 pre-commit==4.6.2
     # via pyaprilaire (pyproject.toml)
-pygments==2.20.0
+pygments==2.21.0
     # via pytest
 pyproject-hooks==1.2.0
     # via
@@ -64,11 +64,11 @@ pytest-asyncio==1.4.0
     # via pyaprilaire (pyproject.toml)
 pytest-cov==7.1.0
     # via pyaprilaire (pyproject.toml)
-python-discovery==1.5.2
+python-discovery==1.5.3
     # via virtualenv
 pyyaml==6.0.3
     # via pre-commit
-ruff==0.16.3
+ruff==0.16.4
     # via pyaprilaire (pyproject.toml)
 toml==0.10.2
     # via bumpver
@@ -85,9 +85,9 @@ typing-extensions==4.16.0
     #   pip-tools
     #   pytest-asyncio
     #   virtualenv
-virtualenv==21.7.4
+virtualenv==21.7.5
     # via pre-commit
-wheel==0.47.0
+wheel==0.48.0
     # via pip-tools
 
 # The following packages are considered to be unsafe in a requirements file:
