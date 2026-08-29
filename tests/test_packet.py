@@ -741,6 +741,242 @@ def test_identification_2_serialize():
     assert serialized == bytes([1, 1, 0, 9, 3, 8, 2, 1, 2, 3, 4, 5, 6, 176])
 
 
+def test_serialize_partial_write_null_defaults_other_fields():
+    # Regression test: serialize() had no null path, so a mapped field
+    # absent from `data` fell straight into arithmetic/bytes() as None and
+    # raised TypeError - Packet(WRITE, CONTROL, 1,
+    # data={HEAT_SETPOINT: 21.0}).serialize() used to raise "'<' not
+    # supported between instances of 'NoneType' and 'int'" out of
+    # _encode_temperature. Spec section G: writing NULL (0x00) for a field
+    # leaves it unmodified - that's exactly what must happen here for MODE,
+    # FAN_MODE, and COOL_SETPOINT.
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        1,
+        0,
+        data={Attribute.HEAT_SETPOINT: 21.0},
+    ).serialize()
+
+    assert serialized == bytes(
+        [0x01, 0x00, 0x00, 0x07, 0x01, 0x02, 0x01, 0x00, 0x00, 0x15, 0x00, 0xA5]
+    )
+    assert len(serialized) == 12
+
+
+def test_serialize_empty_data_all_fields_null():
+    # Regression test: Packet(_, CONTROL, 3, data={}).serialize() used to
+    # raise "'NoneType' object cannot be interpreted as an integer" from
+    # bytes(payload), since HUMIDITY had no null handling either. Uses COS
+    # rather than WRITE: an all-null WRITE is now rejected outright as a
+    # no-op (see test_serialize_write_with_no_populated_fields_raises) -
+    # this test is about the HUMIDITY null-padding itself, not about WRITE
+    # specifically, and COS/READ_RESPONSE share the same serialization path.
+    serialized = Packet(
+        Action.COS,
+        FunctionalDomain.CONTROL,
+        3,
+        1,
+        0,
+        data={},
+    ).serialize()
+
+    assert serialized == bytes([0x01, 0x00, 0x00, 0x04, 0x05, 0x02, 0x03, 0x00, 0x62])
+    assert len(serialized) == 9
+
+
+def test_serialize_write_with_no_populated_fields_raises():
+    # A WRITE where every mapped field is absent would serialize as an
+    # all-NULL payload - per spec section G that changes nothing on the
+    # device, so it's a no-op write. That's never a deliberate call; it's
+    # far more likely an empty `data` dict reaching here by mistake, so
+    # this fails loudly instead of silently sending a packet that does
+    # nothing.
+    with pytest.raises(ValueError, match="no populated fields"):
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.CONTROL,
+            3,
+            1,
+            0,
+            data={},
+        ).serialize()
+
+
+def test_serialize_write_with_one_populated_field_does_not_raise():
+    # A partial write - at least one mapped field set, the rest left to
+    # null-pad - is the legitimate case this must not reject.
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        1,
+        0,
+        data={Attribute.HEAT_SETPOINT: 21.0},
+    ).serialize()
+
+    assert len(serialized) == 12
+
+
+def test_serialize_text_null_field_occupies_full_length():
+    # Regression test: Packet(WRITE, IDENTIFICATION, 5,
+    # data={NAME: "TSTAT"}).serialize() used to raise "object of type
+    # 'NoneType' has no len()" because LOCATION (absent from data) fell
+    # through to len(None) in the TEXT branch. A null TEXT field must still
+    # occupy length + 1 bytes (all zero) so the payload length stays
+    # correct - a null LOCATION (length 7) must emit 8 bytes.
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.IDENTIFICATION,
+        5,
+        1,
+        0,
+        data={Attribute.NAME: "TSTAT"},
+    ).serialize()
+
+    # header(4) + action/fd/attr(3) + LOCATION null(8) + NAME(16) + crc(1)
+    assert len(serialized) == 32
+    payload = serialized[4:-1]
+    location_bytes = payload[3:11]
+    name_bytes = payload[11:27]
+
+    assert location_bytes == bytes([0] * 8)
+    assert name_bytes == b"TSTAT" + bytes([0] * 11)
+
+
+def test_serialize_scheduling_4_hold_only_null_padding():
+    # Concretely quoted in the defect report: once #82's newly-named bytes
+    # land on top of this fix, a partially-populated Scheduling/4 write must
+    # not crash and must still emit the full 10-byte payload (1 named HOLD
+    # byte + 9 null-padded bytes).
+    serialized = Packet(
+        Action.COS,
+        FunctionalDomain.SCHEDULING,
+        4,
+        1,
+        0,
+        data={Attribute.HOLD: 1},
+    ).serialize()
+
+    payload = serialized[4:-1]
+
+    assert len(payload) == 13  # action, fd, attr + 10 data bytes
+    assert payload[3:] == bytes([1] + [0] * 9)
+
+
+def test_serialize_setup_1_away_available_only_null_padding():
+    # Concretely quoted in the defect report: a partially-populated Setup/1
+    # write must not crash and must still emit the full 44-byte payload.
+    serialized = Packet(
+        Action.COS,
+        FunctionalDomain.SETUP,
+        1,
+        1,
+        0,
+        data={Attribute.AWAY_AVAILABLE: 1},
+    ).serialize()
+
+    payload = serialized[4:-1]
+
+    assert len(payload) == 47  # action, fd, attr + 44 data bytes
+    expected_data = [0] * 44
+    expected_data[26] = 1
+    assert list(payload[3:]) == expected_data
+
+
+def test_serialize_identification_2_mac_address_only_no_null_needed():
+    # Concretely quoted in the defect report: a fully-populated
+    # Identification/2 write (the only mapped field) must keep working
+    # unchanged.
+    serialized = Packet(
+        Action.READ_RESPONSE,
+        FunctionalDomain.IDENTIFICATION,
+        2,
+        1,
+        0,
+        data={Attribute.MAC_ADDRESS: [1, 2, 3, 4, 5, 6]},
+    ).serialize()
+
+    payload = serialized[4:-1]
+
+    assert len(payload) == 9  # action, fd, attr + 6 MAC bytes
+    assert list(payload[3:]) == [1, 2, 3, 4, 5, 6]
+
+
+def test_serialize_mac_address_null_occupies_six_bytes():
+    # A null MAC_ADDRESS (absent from data) must still occupy all 6 bytes,
+    # not be skipped or raise.
+    serialized = Packet(
+        Action.READ_RESPONSE,
+        FunctionalDomain.IDENTIFICATION,
+        2,
+        1,
+        0,
+        data={},
+    ).serialize()
+
+    payload = serialized[4:-1]
+
+    assert len(payload) == 9
+    assert list(payload[3:]) == [0] * 6
+
+
+def test_serialize_spec_section_g_worked_example_unchanged():
+    # The exact worked example from spec section G must be byte-for-byte
+    # unchanged by the null-serialization fix.
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        1,
+        0,
+        data={
+            Attribute.MODE: 0,
+            Attribute.FAN_MODE: 1,
+            Attribute.HEAT_SETPOINT: 21.0,
+            Attribute.COOL_SETPOINT: 26.5,
+        },
+    ).serialize()
+
+    assert serialized == bytes(
+        [0x01, 0x00, 0x00, 0x07, 0x01, 0x02, 0x01, 0x00, 0x01, 0x15, 0x5A, 0x46]
+    )
+
+
+def test_serialize_control_1_fully_populated_unchanged():
+    # Fully-populated Control/1 writes (no nulls involved) must be unchanged
+    # by the null-serialization fix.
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        data={
+            Attribute.MODE: 0,
+            Attribute.FAN_MODE: 1,
+            Attribute.HEAT_SETPOINT: 21.0,
+            Attribute.COOL_SETPOINT: 26.5,
+        },
+    ).serialize()
+
+    assert serialized == bytes(
+        [0x01, 0x00, 0x00, 0x07, 0x01, 0x02, 0x01, 0x00, 0x01, 0x15, 0x5A, 0x46]
+    )
+
+
+def test_serialize_wrong_type_still_raises():
+    # Only absent/None means null - a genuinely wrong-typed value (e.g. a
+    # string where a temperature float belongs) must still fail loudly
+    # rather than being silently treated as null.
+    with pytest.raises(TypeError):
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.CONTROL,
+            1,
+            data={Attribute.HEAT_SETPOINT: "hot"},
+        ).serialize()
+
+
 def test_identification_4_serialize():
     serialized = Packet(
         Action.READ_RESPONSE,
