@@ -213,6 +213,7 @@ MAPPING = {
         FunctionalDomain.STATUS: {
             2: [
                 (Attribute.SYNCED, ValueType.INTEGER),
+                (None, None),
             ],
             6: [
                 (Attribute.HEATING_EQUIPMENT_STATUS, ValueType.INTEGER),
@@ -288,7 +289,7 @@ class Packet:
         while data_index < len(data):
             revision = data[data_index]
             sequence = data[data_index + 1]
-            count = data[data_index + 2] << 2 | data[data_index + 3]
+            count = data[data_index + 2] << 8 | data[data_index + 3]
 
             action = int(data[data_index + 4])
             functional_domain = int(data[data_index + 5])
@@ -304,7 +305,12 @@ class Packet:
             if action == Action.NACK:
                 nack_attribute = int(data[data_index + 5])
 
-                yield NackPacket(nack_attribute)
+                crc_index = data_index + 4 + count
+
+                if crc_index < len(data) and Packet._verify_crc(
+                    data[data_index:crc_index], data[crc_index]
+                ):
+                    yield NackPacket(nack_attribute)
 
                 data_index += count + 5
                 continue
@@ -326,6 +332,7 @@ class Packet:
             payload_start_index = data_index
             data_index += 7
             attribute_index = 0
+            frame_malformed = False
 
             while data_index <= final_index:
                 if attribute_index >= len(
@@ -373,15 +380,30 @@ class Packet:
                             )
                         data_index += 1
                     elif value_type == ValueType.MAC_ADDRESS:
+                        # MAC_ADDRESS is a fixed 6 bytes. If the frame's
+                        # declared length doesn't leave room for all 6, the
+                        # frame is malformed - reading past final_index would
+                        # consume the CRC byte (or the next frame's bytes)
+                        # and desynchronize the stream.
+                        if data_index + 5 > final_index:
+                            frame_malformed = True
+                            break
+
                         mac_address_components = []
 
                         for _ in range(0, 6):
-                            mac_address_components.append(f"{data[data_index]:x}")
+                            mac_address_components.append(f"{data[data_index]:02x}")
                             data_index += 1
 
                         packet.data[attribute_name] = ":".join(mac_address_components)
                     elif value_type == ValueType.TEXT:
                         text_length = extra_attribute_info[0]
+
+                        # TEXT consumes text_length bytes plus one trailing
+                        # byte. Same overshoot risk as MAC_ADDRESS above.
+                        if data_index + text_length > final_index:
+                            frame_malformed = True
+                            break
 
                         text = ""
 
@@ -399,6 +421,10 @@ class Packet:
                         packet.data[attribute_name] = text
 
                     attribute_index += 1
+
+            if frame_malformed:
+                data_index = payload_start_index + count + 5
+                continue
 
             crc = data[data_index]
 

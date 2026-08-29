@@ -102,8 +102,33 @@ def test_packet_multiple_attribute():
     assert packet.attribute == 4
 
 
+def test_count_decoded_high_byte_first():
+    # Regression test for a CNT decoded with the wrong shift (packet.py count
+    # calculation). Spec section F, note 4: CNT is sent high byte first, so a
+    # payload of 300 bytes must be encoded as CNT = 0x01, 0x2C. A payload this
+    # large only exists in a currently-mapped attribute (Control/1) if we pad
+    # it with trailing bytes past the mapped fields, which real devices do
+    # (see the trailing bytes in test_nack_and_packet_parse).
+    header = [1, 1, 1, 44]  # REV, SEQ, CNT high (1), CNT low (44) -> count=300
+    payload = [3, 2, 1, 1, 2, 10, 20] + [0] * 293  # ACTION, FD, ATTR, data..., padding
+    assert len(payload) == 300
+
+    frame = header + payload
+    frame.append(Packet._generate_crc(frame))
+
+    packets: list[Packet] = list(Packet.parse(frame))
+
+    assert len(packets) == 1
+    assert packets[0].data == {
+        Attribute.MODE: 1,
+        Attribute.FAN_MODE: 2,
+        Attribute.HEAT_SETPOINT: 10,
+        Attribute.COOL_SETPOINT: 20,
+    }
+
+
 def test_nack_parse():
-    packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0]))
+    packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0x63]))
 
     assert len(packets) == 1
 
@@ -149,9 +174,133 @@ def test_nack_and_packet_parse():
 
 
 def test_nack_packet_parse():
-    packets: list[Packet] = list(Packet.parse([1, 1, 0, 3, 6, 1, 0]))
+    packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0x63]))
 
     assert isinstance(packets[0], NackPacket)
+
+
+def test_nack_invalid_crc_rejected():
+    # Regression test: NACK frames used to bypass CRC verification entirely,
+    # so line noise could be misparsed as a spurious NACK. Real CRC for this
+    # frame is 0x71, not the 0x00 given here.
+    packets: list[Packet] = list(
+        Packet.parse([0x01, 0x80, 0x00, 0x02, 0x06, 0x10, 0x00])
+    )
+
+    assert packets == []
+
+
+def test_nack_invalid_crc_and_mismatched_attribute_rejected():
+    packets: list[Packet] = list(
+        Packet.parse(
+            [0x01, 0x80, 0x00, 0x07, 0x03, 0x07, 0x06, 0x02, 0x00, 0x01, 0x01, 0x00]
+        )
+    )
+
+    assert packets == []
+
+
+def test_short_mac_frame_does_not_desync_following_frame():
+    # Regression test: MAC_ADDRESS consumed 6 bytes unconditionally, without
+    # checking whether the frame's declared count left room for them. A
+    # short MAC frame would overshoot into the CRC byte (and beyond, into
+    # the next frame), corrupting the parse position for everything after
+    # it. Here the first frame declares only 4 bytes of MAC data (count=7,
+    # so only 1 byte for a required 6), and is followed by a fully valid
+    # Status/6 frame that must still be parsed correctly.
+    packets: list[Packet] = list(
+        Packet.parse(
+            [
+                # Frame 1: truncated MAC address (Identification/2) - malformed
+                0x01,
+                0x80,
+                0x00,
+                0x07,
+                0x03,
+                0x08,
+                0x02,
+                0xB4,
+                0x82,
+                0x55,
+                0x01,
+                0x53,
+                # Frame 2: valid Status/6 frame
+                0x01,
+                0x81,
+                0x00,
+                0x07,
+                0x03,
+                0x07,
+                0x06,
+                0x02,
+                0x00,
+                0x00,
+                0x01,
+                0x31,
+            ]
+        )
+    )
+
+    assert len(packets) == 1
+    assert packets[0].functional_domain == FunctionalDomain.STATUS
+    assert packets[0].attribute == 6
+    assert packets[0].data == {
+        Attribute.HEATING_EQUIPMENT_STATUS: 2,
+        Attribute.COOLING_EQUIPMENT_STATUS: 0,
+        Attribute.PROGRESSIVE_RECOVERY: 0,
+        Attribute.FAN_STATUS: 1,
+    }
+
+
+def test_short_text_frame_does_not_desync_following_frame():
+    # Regression test: TEXT consumed text_length bytes unconditionally,
+    # without checking whether the frame's declared count left room for
+    # them. A short TEXT frame would overshoot into the CRC byte (and
+    # beyond, into the next frame), corrupting the parse position for
+    # everything after it. Here the first frame declares only 2 bytes of
+    # data for Identification/4 (Location, which needs 7), and is
+    # followed by a fully valid Status/6 frame that must still be parsed
+    # correctly.
+    packets: list[Packet] = list(
+        Packet.parse(
+            [
+                # Frame 1: truncated text (Identification/4) - malformed
+                0x01,
+                0x80,
+                0x00,
+                0x05,
+                0x03,
+                0x08,
+                0x04,
+                0x41,
+                0x42,
+                0x00,
+                # Frame 2: valid Status/6 frame
+                0x01,
+                0x81,
+                0x00,
+                0x07,
+                0x03,
+                0x07,
+                0x06,
+                0x02,
+                0x00,
+                0x00,
+                0x01,
+                0x31,
+            ]
+        )
+    )
+
+    assert len(packets) == 1
+    assert packets[0].functional_domain == FunctionalDomain.STATUS
+    assert packets[0].attribute == 6
+    assert packets[0].data == {
+        Attribute.HEATING_EQUIPMENT_STATUS: 2,
+        Attribute.COOLING_EQUIPMENT_STATUS: 0,
+        Attribute.PROGRESSIVE_RECOVERY: 0,
+        Attribute.FAN_STATUS: 1,
+    }
 
 
 def test_control_1_parse():
@@ -205,7 +354,21 @@ def test_identification_2_parse():
 
     packet = packets[0]
 
-    assert packet.data == {Attribute.MAC_ADDRESS: "1:2:3:4:5:6"}
+    assert packet.data == {Attribute.MAC_ADDRESS: "01:02:03:04:05:06"}
+
+
+def test_identification_2_parse_zero_padded_octets():
+    # Regression test: MAC octets under 0x10 used to be formatted without
+    # zero-padding (e.g. "1a" -> "1a" is fine, but 0x00 -> "0" and 0x05 ->
+    # "5"), so the text form of the address depended on its own octet
+    # values. Spec section 8.2 defines these as fixed-width octet values.
+    packets: list[Packet] = list(
+        Packet.parse([1, 1, 0, 9, 3, 8, 2, 0xB4, 0x82, 0x55, 0x00, 0x1A, 0x05, 0x37])
+    )
+
+    packet = packets[0]
+
+    assert packet.data == {Attribute.MAC_ADDRESS: "b4:82:55:00:1a:05"}
 
 
 def test_identification_4_parse():
@@ -251,6 +414,34 @@ def test_identification_4_parse():
     packet = packets[0]
 
     assert packet.data == {Attribute.LOCATION: "12345", Attribute.NAME: "Test Name"}
+
+
+def test_status_2_sync_parse():
+    # Regression test: the Sync attribute (spec section 7.2) has two bytes -
+    # Sync and a Reserved byte - but MAPPING only had one entry, so the
+    # emitted frame declared a payload count of 4 instead of the required 5
+    # (3 header bytes + 2 data bytes). Verify the fixed 5-byte payload
+    # parses correctly and the reserved byte is consumed without error.
+    packets: list[Packet] = list(Packet.parse([1, 0, 0, 5, 1, 7, 2, 1, 0, 0xB6]))
+
+    packet = packets[0]
+
+    assert packet.functional_domain == FunctionalDomain.STATUS
+    assert packet.attribute == 2
+    assert packet.data == {Attribute.SYNCED: 1}
+
+
+def test_status_2_sync_serialize():
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.STATUS,
+        2,
+        1,
+        0,
+        data={Attribute.SYNCED: 1},
+    ).serialize()
+
+    assert serialized == bytes([1, 0, 0, 5, 1, 7, 2, 1, 0, 0xB6])
 
 
 def test_decode_temperature():
@@ -361,6 +552,29 @@ def test_serialize_single_packet_no_data():
     ).serialize()
 
     assert serialized == bytes([1, 1, 0, 3, 2, 2, 1, 70])
+
+
+def test_spec_section_g_write_example_serialize():
+    # The worked example from spec section G: writing Fan=ON, Heat
+    # Setpoint=21.0C (70F), Cool Setpoint=26.5C (80F), leaving Mode
+    # unwritten (0x00 / null).
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        1,
+        0,
+        data={
+            Attribute.MODE: 0,
+            Attribute.FAN_MODE: 1,
+            Attribute.HEAT_SETPOINT: 21.0,
+            Attribute.COOL_SETPOINT: 26.5,
+        },
+    ).serialize()
+
+    assert serialized == bytes(
+        [0x01, 0x00, 0x00, 0x07, 0x01, 0x02, 0x01, 0x00, 0x01, 0x15, 0x5A, 0x46]
+    )
 
 
 def test_control_1_serialize():
