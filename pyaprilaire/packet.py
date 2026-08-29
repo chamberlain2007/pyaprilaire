@@ -213,6 +213,7 @@ MAPPING = {
         FunctionalDomain.STATUS: {
             2: [
                 (Attribute.SYNCED, ValueType.INTEGER),
+                (None, None),
             ],
             6: [
                 (Attribute.HEATING_EQUIPMENT_STATUS, ValueType.INTEGER),

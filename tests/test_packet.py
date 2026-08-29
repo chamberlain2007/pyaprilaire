@@ -365,6 +365,34 @@ def test_identification_4_parse():
     assert packet.data == {Attribute.LOCATION: "12345", Attribute.NAME: "Test Name"}
 
 
+def test_status_2_sync_parse():
+    # Regression test: the Sync attribute (spec section 7.2) has two bytes -
+    # Sync and a Reserved byte - but MAPPING only had one entry, so the
+    # emitted frame declared a payload count of 4 instead of the required 5
+    # (3 header bytes + 2 data bytes). Verify the fixed 5-byte payload
+    # parses correctly and the reserved byte is consumed without error.
+    packets: list[Packet] = list(Packet.parse([1, 0, 0, 5, 1, 7, 2, 1, 0, 0xB6]))
+
+    packet = packets[0]
+
+    assert packet.functional_domain == FunctionalDomain.STATUS
+    assert packet.attribute == 2
+    assert packet.data == {Attribute.SYNCED: 1}
+
+
+def test_status_2_sync_serialize():
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.STATUS,
+        2,
+        1,
+        0,
+        data={Attribute.SYNCED: 1},
+    ).serialize()
+
+    assert serialized == bytes([1, 0, 0, 5, 1, 7, 2, 1, 0, 0xB6])
+
+
 def test_decode_temperature():
     temperature = Packet._decode_temperature(0x15)
 
