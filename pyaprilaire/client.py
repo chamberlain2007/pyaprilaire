@@ -747,11 +747,21 @@ class AprilaireClient(SocketClient):
     async def test_connection(self) -> str:
         """Test connecting to a thermostat without entering a reconnect loop."""
 
-        await self.start_listen_once()
+        try:
+            await self.start_listen_once()
 
-        await self.read_mac_address_and_wait(5)
-
-        self.stop_listen()
+            await self.read_mac_address_and_wait(5)
+        finally:
+            # The device only accepts one home automation connection at a
+            # time (see the README), so this connection must be closed on
+            # every exit path - a failed `start_listen_once`, a NACKed read
+            # propagating a `NackError` out of `wait_for_response`, or
+            # success - not just the success path. Otherwise this "test the
+            # connection" helper would be exactly what leaks the single
+            # connection slot. `stop_listen` tolerates being called when no
+            # connection was ever established (`_disconnect` only closes a
+            # transport that actually exists).
+            self.stop_listen()
 
     async def wait_for_response(
         self,

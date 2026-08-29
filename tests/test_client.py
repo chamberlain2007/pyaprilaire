@@ -1268,6 +1268,31 @@ async def test_test_connection(client: AprilaireClient):
         assert reconnect_once_mock.call_count == 1
 
 
+async def test_test_connection_stops_listening_on_nack_error(client: AprilaireClient):
+    """The device only accepts one home-automation connection at a time (see
+    the README), so `test_connection` must not leak the connection when the
+    identification read is terminally NACKed: `stop_listen()` must still run
+    even though `wait_for_response` now raises `NackError` instead of
+    returning, and that error must still reach the caller."""
+
+    reconnect_once_mock = AsyncMock()
+    nack_error = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
+
+    client.read_mac_address = AsyncMock()
+    client.wait_for_response = AsyncMock(side_effect=nack_error)
+    client.stop_listen = Mock()
+
+    with patch(
+        "pyaprilaire.socket_client.SocketClient._reconnect_once",
+        new=reconnect_once_mock,
+    ):
+        with pytest.raises(NackError) as exc_info:
+            await client.test_connection()
+
+    assert exc_info.value is nack_error
+    assert client.stop_listen.call_count == 1
+
+
 # --- Regression/coverage tests for the spec section H.5 NACK status table
 # and retry policy: a NACK is no longer just a log line - its status code is
 # decoded (`NackStatus`), the three retryable codes are retried per the
