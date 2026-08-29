@@ -331,6 +331,7 @@ class Packet:
             payload_start_index = data_index
             data_index += 7
             attribute_index = 0
+            frame_malformed = False
 
             while data_index <= final_index:
                 if attribute_index >= len(
@@ -378,6 +379,15 @@ class Packet:
                             )
                         data_index += 1
                     elif value_type == ValueType.MAC_ADDRESS:
+                        # MAC_ADDRESS is a fixed 6 bytes. If the frame's
+                        # declared length doesn't leave room for all 6, the
+                        # frame is malformed - reading past final_index would
+                        # consume the CRC byte (or the next frame's bytes)
+                        # and desynchronize the stream.
+                        if data_index + 5 > final_index:
+                            frame_malformed = True
+                            break
+
                         mac_address_components = []
 
                         for _ in range(0, 6):
@@ -387,6 +397,12 @@ class Packet:
                         packet.data[attribute_name] = ":".join(mac_address_components)
                     elif value_type == ValueType.TEXT:
                         text_length = extra_attribute_info[0]
+
+                        # TEXT consumes text_length bytes plus one trailing
+                        # byte. Same overshoot risk as MAC_ADDRESS above.
+                        if data_index + text_length > final_index:
+                            frame_malformed = True
+                            break
 
                         text = ""
 
@@ -404,6 +420,10 @@ class Packet:
                         packet.data[attribute_name] = text
 
                     attribute_index += 1
+
+            if frame_malformed:
+                data_index = payload_start_index + count + 5
+                continue
 
             crc = data[data_index]
 

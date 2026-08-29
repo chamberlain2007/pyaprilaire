@@ -200,6 +200,58 @@ def test_nack_invalid_crc_and_mismatched_attribute_rejected():
     assert packets == []
 
 
+def test_short_mac_frame_does_not_desync_following_frame():
+    # Regression test: MAC_ADDRESS consumed 6 bytes unconditionally, without
+    # checking whether the frame's declared count left room for them. A
+    # short MAC frame would overshoot into the CRC byte (and beyond, into
+    # the next frame), corrupting the parse position for everything after
+    # it. Here the first frame declares only 4 bytes of MAC data (count=7,
+    # so only 1 byte for a required 6), and is followed by a fully valid
+    # Status/6 frame that must still be parsed correctly.
+    packets: list[Packet] = list(
+        Packet.parse(
+            [
+                # Frame 1: truncated MAC address (Identification/2) - malformed
+                0x01,
+                0x80,
+                0x00,
+                0x07,
+                0x03,
+                0x08,
+                0x02,
+                0xB4,
+                0x82,
+                0x55,
+                0x01,
+                0x53,
+                # Frame 2: valid Status/6 frame
+                0x01,
+                0x81,
+                0x00,
+                0x07,
+                0x03,
+                0x07,
+                0x06,
+                0x02,
+                0x00,
+                0x00,
+                0x01,
+                0x31,
+            ]
+        )
+    )
+
+    assert len(packets) == 1
+    assert packets[0].functional_domain == FunctionalDomain.STATUS
+    assert packets[0].attribute == 6
+    assert packets[0].data == {
+        Attribute.HEATING_EQUIPMENT_STATUS: 2,
+        Attribute.COOLING_EQUIPMENT_STATUS: 0,
+        Attribute.PROGRESSIVE_RECOVERY: 0,
+        Attribute.FAN_STATUS: 1,
+    }
+
+
 def test_control_1_parse():
     packets: list[Packet] = list(Packet.parse([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]))
 
