@@ -18,11 +18,6 @@ from .socket_client import SocketClient
 # connection) - cap it there so such a peer can't grow the buffer forever.
 MAX_BUFFER_SIZE = 65535 + 5
 
-# Sentinel distinguishing "no sequence argument passed" from an explicit
-# `sequence=None` (which would mean "match by (functional_domain, attribute)
-# only, don't pin to any sequence"). See `AprilaireClient.wait_for_response`.
-_SEQUENCE_UNSET = object()
-
 
 class _AprilaireClientProtocol(asyncio.Protocol):
     """Protocol for interacting with the thermostat over socket connection"""
@@ -46,18 +41,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         self.sequence = 0
 
-        # Sequence number of the most recently sent request for each
-        # (functional_domain, attribute), keyed the same way as
-        # `AprilaireClient.futures`. Spec section F notes 2-3: a Read
-        # Response (and any retries of the request) reuse the sequence
-        # number of the request that produced them, so this is what lets
-        # `AprilaireClient.wait_for_response` correlate a response back to
-        # the specific request that asked for it, rather than only
-        # fuzzily matching by (functional_domain, attribute) - which is
-        # also what an unsolicited COS on the same key would match (spec
-        # section H.4).
-        self.pending_request_sequences: dict[tuple[FunctionalDomain, int], int] = {}
-
         # Bytes received but not yet resolved into complete frames, see
         # `data_received`.
         self._receive_buffer = bytearray()
@@ -72,10 +55,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         it was sent with"""
 
         packet.sequence = self._get_sequence()
-
-        self.pending_request_sequences[(packet.functional_domain, packet.attribute)] = (
-            packet.sequence
-        )
 
         self.logger.debug(
             "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
@@ -612,9 +591,7 @@ class AprilaireClient(SocketClient):
 
         await self.start_listen_once()
 
-        await self.read_mac_address()
-
-        await self.wait_for_response(FunctionalDomain.IDENTIFICATION, 2, 5)
+        await self.read_mac_address_and_wait(5)
 
         self.stop_listen()
 
@@ -623,20 +600,27 @@ class AprilaireClient(SocketClient):
         functional_domain: FunctionalDomain,
         attribute: int,
         timeout: int = None,
-        sequence: int | None = _SEQUENCE_UNSET,
+        sequence: int | None = None,
     ):
         """Wait for a response for a particular request.
 
-        `sequence`, if given, pins this wait to that exact sequence number
-        (see `read_mac_address_and_wait` and its siblings, which pass the
-        value their own send just returned). This must be used whenever the
-        send and the wait aren't a single atomic step from the caller's
-        point of view: looking up "the most recently sent request's
-        sequence" here instead is racy - a second call to the same
-        `read_*`/`set_*` method between this caller's send and its call to
-        `wait_for_response` would overwrite `pending_request_sequences`
-        before this method ever reads it, pinning this wait to the wrong
-        request.
+        If `sequence` is given, this wait only resolves for a response (or
+        NACK) carrying that exact sequence number - use this when the wait
+        corresponds to a specific outgoing request (see
+        `read_mac_address_and_wait` and its siblings, which pass the value
+        their own send just returned; prefer those over calling this
+        directly whenever there's a specific request to wait on). Passing
+        a stale or otherwise wrong sequence number silently waits on the
+        wrong request - there's no way for this method to detect that,
+        since it has no way to tell "your" request apart from anyone
+        else's.
+
+        If `sequence` is omitted (the default, `None`), this resolves on
+        the next response for `(functional_domain, attribute)` regardless
+        of which request caused it - including an unsolicited COS (spec
+        section H.4). Use this only when that's actually what's wanted
+        (e.g. observing the next update to a value, not correlating a
+        specific request's answer).
         """
 
         loop = asyncio.get_event_loop()
@@ -644,23 +628,7 @@ class AprilaireClient(SocketClient):
 
         future_key = (functional_domain, attribute)
 
-        if sequence is not _SEQUENCE_UNSET:
-            expected_sequence = sequence
-        else:
-            # Fallback for a caller that didn't capture its own send's
-            # sequence: use the sequence number of the most recently sent
-            # request for this (functional_domain, attribute), if there is
-            # one, so the response can still be correlated back to a
-            # request rather than to any packet that happens to share its
-            # domain/attribute - see `data_received`. Racy as described
-            # above; kept only for callers that predate sequence capture.
-            expected_sequence = None
-            if self.protocol is not None:
-                expected_sequence = self.protocol.pending_request_sequences.get(
-                    future_key
-                )
-
-        entry = (future, expected_sequence)
+        entry = (future, sequence)
 
         self.futures.setdefault(future_key, []).append(entry)
 

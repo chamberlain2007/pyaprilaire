@@ -980,9 +980,7 @@ async def test_client_read_and_wait_sends_request_and_waits_on_its_own_sequence(
     expected_packet: Packet,
 ):
     """Each `read_*_and_wait` method must send its request, then wait pinned
-    to the exact sequence number that specific send used - not whatever
-    `pending_request_sequences` happens to hold by the time the wait
-    starts."""
+    to the exact sequence number that specific send used."""
 
     wait_for_response_mock = AsyncMock(return_value={"result": "ok"})
     client.wait_for_response = wait_for_response_mock
@@ -991,32 +989,32 @@ async def test_client_read_and_wait_sends_request_and_waits_on_its_own_sequence(
 
     assertPacketQueueContains(protocol, expected_packet)
 
-    sent_sequence = protocol.pending_request_sequences[(functional_domain, attribute)]
-
+    # First (and only) send from this fixture's fresh protocol, so it used
+    # sequence 1 (`_get_sequence` starts at 0 and pre-increments).
     wait_for_response_mock.assert_called_once_with(
-        functional_domain, attribute, 5, sequence=sent_sequence
+        functional_domain, attribute, 5, sequence=1
     )
     assert result == {"result": "ok"}
 
 
 async def test_client_read_mac_address_and_wait_pins_to_its_own_sequence(
-    client: AprilaireClient, protocol: _AprilaireClientProtocol
+    client: AprilaireClient,
 ):
     """Regression test for the actual race: a second, unrelated call to
     read_mac_address() landing between this call's send and its wait (e.g.
     from a concurrent task) must not change which sequence this wait ends
-    up pinned to. Before `_and_wait` methods captured their own send's
-    sequence, `wait_for_response` instead looked up "the most recently sent
-    request's sequence" - which the interleaved call would have overwritten
-    by the time the lookup happened."""
+    up pinned to - it must stay pinned to the sequence its own send
+    returned, not whatever the most recent send happened to be."""
 
     real_read_mac_address = client.read_mac_address
+    interleaved_sequence = None
 
     async def read_mac_address_then_interleave():
+        nonlocal interleaved_sequence
         sequence = await real_read_mac_address()
         # Simulates a second, concurrent caller sending the same request
         # before this call gets to wait on its own.
-        await real_read_mac_address()
+        interleaved_sequence = await real_read_mac_address()
         return sequence
 
     client.read_mac_address = read_mac_address_then_interleave
@@ -1026,10 +1024,12 @@ async def test_client_read_mac_address_and_wait_pins_to_its_own_sequence(
 
     await client.read_mac_address_and_wait(5)
 
+    # The interleaved call really did get a different sequence...
+    assert interleaved_sequence == 2
+    # ...but this call's wait is still pinned to its own (the first) one.
     wait_for_response_mock.assert_called_once_with(
         FunctionalDomain.IDENTIFICATION, 2, 5, sequence=1
     )
-    assert protocol.pending_request_sequences[(FunctionalDomain.IDENTIFICATION, 2)] == 2
 
 
 async def test_client_wait_for_response_success(client: AprilaireClient):
@@ -1058,45 +1058,17 @@ async def test_client_wait_for_response_timeout(client: AprilaireClient):
 # spec section F notes 2-3 and section H.4: responses (including COS) are
 # now correlated back to the specific request that caused them via
 # sequence number, rather than only by (functional_domain, attribute). See
-# `AprilaireClient.data_received` and `wait_for_response`, and
-# `_AprilaireClientProtocol._send_packet` / `pending_request_sequences`.
+# `AprilaireClient.data_received` and `wait_for_response`.
 
 
-async def test_client_wait_for_response_captures_request_sequence(
-    client: AprilaireClient, protocol: _AprilaireClientProtocol
-):
-    """`wait_for_response` must capture the sequence number of the request
-    that was just sent for this (functional_domain, attribute), so the
-    response can later be correlated back to it specifically."""
-
-    await protocol.read_dehumidification_setpoint()
-    request_sequence = protocol.pending_request_sequences[(FunctionalDomain.CONTROL, 3)]
-
-    # By the time `wait_for_response` calls `asyncio.wait_for`, it has
-    # already registered its (future, sequence) entry in `self.futures` -
-    # capture that entry from inside the mocked call to inspect it.
-    captured_entries = []
-
-    async def fake_wait_for(future, timeout):
-        captured_entries.extend(client.futures[(FunctionalDomain.CONTROL, 3)])
-        return "unused"
-
-    with patch("asyncio.wait_for", new=fake_wait_for):
-        result = await client.wait_for_response(FunctionalDomain.CONTROL, 3, 1)
-
-    assert result == "unused"
-    assert captured_entries == [(captured_entries[0][0], request_sequence)]
-
-
-async def test_client_wait_for_response_explicit_sequence_bypasses_lookup(
+async def test_client_wait_for_response_explicit_sequence_pins_wait(
     client: AprilaireClient,
 ):
-    """An explicit `sequence` argument must be used as-is, without ever
-    consulting `pending_request_sequences` - this is what lets
-    `read_mac_address_and_wait` and its siblings pin a wait to the exact
-    sequence their own send used, closing the race where a second send for
-    the same key overwrites the shared "most recent sequence" value before
-    a lookup-based wait gets to read it."""
+    """An explicit `sequence` argument pins the wait to that exact sequence
+    number - this is what lets `read_mac_address_and_wait` and its
+    siblings correlate a wait back to the specific request their own send
+    just made, rather than to any response for the same
+    (functional_domain, attribute)."""
 
     captured_entries = []
 
@@ -1113,14 +1085,13 @@ async def test_client_wait_for_response_explicit_sequence_bypasses_lookup(
     assert captured_entries == [(captured_entries[0][0], 42)]
 
 
-async def test_client_wait_for_response_explicit_none_sequence_skips_lookup(
-    client: AprilaireClient, protocol: _AprilaireClientProtocol
+async def test_client_wait_for_response_default_sequence_is_unpinned(
+    client: AprilaireClient,
 ):
-    """Passing `sequence=None` explicitly must be honored as-is (no
-    sequence pinning), not treated the same as omitting the argument -
-    only omitting it triggers the `pending_request_sequences` fallback."""
-
-    protocol.pending_request_sequences[(FunctionalDomain.CONTROL, 1)] = 99
+    """Omitting `sequence` (the default) resolves on the next response for
+    this (functional_domain, attribute) regardless of which request caused
+    it, including an unsolicited COS - the caller is explicitly asking to
+    observe the key, not correlate a specific request's answer."""
 
     captured_entries = []
 
@@ -1129,7 +1100,7 @@ async def test_client_wait_for_response_explicit_none_sequence_skips_lookup(
         return "unused"
 
     with patch("asyncio.wait_for", new=fake_wait_for):
-        await client.wait_for_response(FunctionalDomain.CONTROL, 1, 1, sequence=None)
+        await client.wait_for_response(FunctionalDomain.CONTROL, 1, 1)
 
     assert captured_entries == [(captured_entries[0][0], None)]
 
@@ -1207,7 +1178,7 @@ async def test_client_data_received_concurrent_duplicate_requests_resolved_indep
 
 
 async def test_client_wait_for_response_cleanup_survives_already_removed_entry(
-    client: AprilaireClient, protocol: _AprilaireClientProtocol
+    client: AprilaireClient,
 ):
     """When a response resolves one of several concurrent waiters on the
     same key, `data_received` replaces `self.futures[future_key]` with a
@@ -1220,15 +1191,13 @@ async def test_client_wait_for_response_cleanup_survives_already_removed_entry(
     attribute = 3
     future_key = (functional_domain, attribute)
 
-    protocol.pending_request_sequences[future_key] = 5
     first_task = asyncio.ensure_future(
-        client.wait_for_response(functional_domain, attribute, 1)
+        client.wait_for_response(functional_domain, attribute, 1, sequence=5)
     )
     await asyncio.sleep(0)  # let it register its (future, 5) entry
 
-    protocol.pending_request_sequences[future_key] = 6
     second_task = asyncio.ensure_future(
-        client.wait_for_response(functional_domain, attribute, 1)
+        client.wait_for_response(functional_domain, attribute, 1, sequence=6)
     )
     await asyncio.sleep(0)  # let it register its (future, 6) entry
 
