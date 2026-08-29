@@ -1046,6 +1046,48 @@ async def test_client_data_received_concurrent_duplicate_requests_resolved_indep
     assert client.futures == {}
 
 
+async def test_client_wait_for_response_cleanup_survives_already_removed_entry(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """When a response resolves one of several concurrent waiters on the
+    same key, `data_received` replaces `self.futures[future_key]` with a
+    new list containing only the still-unresolved entries. The resolved
+    waiter's own `finally` cleanup then finds its entry missing from that
+    (different) list object - `list.remove` raising ValueError there must
+    be swallowed, not propagated."""
+
+    functional_domain = FunctionalDomain.CONTROL
+    attribute = 3
+    future_key = (functional_domain, attribute)
+
+    protocol.pending_request_sequences[future_key] = 5
+    first_task = asyncio.ensure_future(
+        client.wait_for_response(functional_domain, attribute, 1)
+    )
+    await asyncio.sleep(0)  # let it register its (future, 5) entry
+
+    protocol.pending_request_sequences[future_key] = 6
+    second_task = asyncio.ensure_future(
+        client.wait_for_response(functional_domain, attribute, 1)
+    )
+    await asyncio.sleep(0)  # let it register its (future, 6) entry
+
+    # Resolves only the second waiter; futures[future_key] is rebuilt as a
+    # new list containing just the first (still-pending) entry.
+    await client.data_received(functional_domain, attribute, {"value": 60}, 6)
+
+    # The second waiter's finally block must not raise even though its own
+    # entry is no longer in the list it finds at futures[future_key], and
+    # the still-pending first entry must be untouched.
+    assert await second_task == {"value": 60}
+    assert len(client.futures[future_key]) == 1
+    assert client.futures[future_key][0][1] == 5
+
+    first_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+
+
 async def test_client_wait_for_response_timeout_removes_future(
     client: AprilaireClient,
 ):
