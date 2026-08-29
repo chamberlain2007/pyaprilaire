@@ -73,11 +73,20 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         self.packet_queue = asyncio.Queue()
 
-        self.sequence = 0
+        # Messages sent by the Thermostat use sequence numbers 128-255
+        # (spec F, note 1). Starting at 127 makes the first _get_sequence()
+        # call return 128.
+        self.sequence = 127
 
     def _get_sequence(self):
-        """Get and increment the current sequence"""
-        self.sequence = (self.sequence + 1) % 128
+        """Get and increment the current sequence number.
+
+        Only for messages the mock originates itself (COS). Read responses
+        instead echo the sequence of the request that triggered them (spec
+        F, note 2) - see the READ_RESPONSE packets below, which use
+        packet.sequence rather than this method.
+        """
+        self.sequence = 128 + ((self.sequence + 1) % 128)
 
         return self.sequence
 
@@ -333,7 +342,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.CONTROL,
                                 1,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.MODE: self.mode,
                                     Attribute.FAN_MODE: self.fan_mode,
@@ -348,7 +357,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.CONTROL,
                                 7,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.THERMOSTAT_MODES: 6,
                                     Attribute.AIR_CLEANING_AVAILABLE: 1,
@@ -364,7 +373,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.CONTROL,
                                 3,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
                                 },
@@ -376,7 +385,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.CONTROL,
                                 4,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint
                                 },
@@ -388,7 +397,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.CONTROL,
                                 5,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.FRESH_AIR_MODE: self.fresh_air_mode,
                                     Attribute.FRESH_AIR_EVENT: self.fresh_air_event,
@@ -401,7 +410,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.CONTROL,
                                 6,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.AIR_CLEANING_MODE: self.air_cleaning_mode,
                                     Attribute.AIR_CLEANING_EVENT: self.air_cleaning_event,
@@ -415,7 +424,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.SENSORS,
                                 2,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
                                     Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
@@ -435,7 +444,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.SCHEDULING,
                                 4,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={Attribute.HOLD: self.hold},
                             )
                         )
@@ -446,7 +455,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.IDENTIFICATION,
                                 2,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={Attribute.MAC_ADDRESS: self.mac_address},
                             )
                         )
@@ -456,7 +465,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.IDENTIFICATION,
                                 4,
-                                sequence=self._get_sequence(),
+                                sequence=packet.sequence,
                                 data={
                                     Attribute.LOCATION: self.location,
                                     Attribute.NAME: self.name,
