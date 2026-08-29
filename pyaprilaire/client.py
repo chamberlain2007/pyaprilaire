@@ -386,8 +386,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     async def set_written_outdoor_temperature_value(self, value: float):
         """Send a request to update the written outdoor temperature value"""
-        value = round(value * 2) / 2
-
         await self._send_packet(
             Packet(
                 Action.WRITE,

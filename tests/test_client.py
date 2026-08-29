@@ -800,7 +800,7 @@ async def test_protocol_set_written_outdoor_temperature_value(
             4,
             data={
                 Attribute.OUTDOOR_SENSOR_STATUS: 0,
-                Attribute.OUTDOOR_SENSOR: 21.5,
+                Attribute.OUTDOOR_SENSOR: 21.7,
             },
         ),
     )
