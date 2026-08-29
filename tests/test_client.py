@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from pyaprilaire.client import AprilaireClient, _AprilaireClientProtocol
-from pyaprilaire.const import Action, Attribute, FunctionalDomain
+from pyaprilaire.client import AprilaireClient, NackError, _AprilaireClientProtocol
+from pyaprilaire.const import Action, Attribute, FunctionalDomain, NackStatus
 from pyaprilaire.packet import Packet
 
 tracemalloc.start()
@@ -1266,3 +1266,275 @@ async def test_test_connection(client: AprilaireClient):
         await client.test_connection()
 
         assert reconnect_once_mock.call_count == 1
+
+
+# --- Regression/coverage tests for the spec section H.5 NACK status table
+# and retry policy: a NACK is no longer just a log line - its status code is
+# decoded (`NackStatus`), the three retryable codes are retried per the
+# spec's "Action in Case of NACK" column (reusing the original request's
+# sequence number, per section F note 3), and a terminal NACK fails the
+# pending `wait_for_response` future promptly via `NackError` instead of
+# leaving the caller to wait out its timeout. See
+# `_AprilaireClientProtocol._handle_nack` / `_retry_packet` and
+# `AprilaireClient.data_received` / `wait_for_response`.
+
+
+def _nack_frame(sequence: int, status: int) -> bytes:
+    """Build a CRC-valid NACK frame carrying `status` at the position spec
+    section G calls FUNCTIONAL DOMAIN / STATUS CODE, and `sequence` in the
+    frame header (spec section F notes 2-3)."""
+    frame = [1, sequence, 0, 2, 6, status]
+    frame.append(Packet._generate_crc(frame))
+    return bytes(frame)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        NackStatus.GENERIC_ERROR,
+        NackStatus.BUFFER_FULL_OR_DEVICE_BUSY,
+        NackStatus.TIMED_OUT_WAITING_FOR_RESPONSE,
+    ],
+)
+async def test_protocol_nack_retryable_status_retries_exactly_twice_then_stops(
+    protocol: _AprilaireClientProtocol, status: NackStatus
+):
+    """Spec section H.5: these three status codes are retried "2 additional
+    times ... and then clear[ed] from the queue" - a third NACK for the same
+    request must stop retrying and drop the in-flight record."""
+
+    protocol._retry_packet = AsyncMock()
+
+    original_packet = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+    await protocol._send_packet(original_packet)
+    sequence = original_packet.sequence
+
+    protocol.data_received(_nack_frame(sequence, int(status)))
+    assert protocol._retry_packet.call_count == 1
+    assert protocol._retry_packet.call_args[0][0] is original_packet
+    assert protocol._in_flight_requests[sequence] == (original_packet, 1)
+
+    protocol.data_received(_nack_frame(sequence, int(status)))
+    assert protocol._retry_packet.call_count == 2
+    assert protocol._in_flight_requests[sequence] == (original_packet, 2)
+
+    # Third NACK: the retry budget (2 additional attempts) is exhausted, so
+    # no further retry is scheduled and the record is cleared.
+    protocol.data_received(_nack_frame(sequence, int(status)))
+    assert protocol._retry_packet.call_count == 2
+    assert sequence not in protocol._in_flight_requests
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        NackStatus.UNKNOWN_ATTRIBUTE,
+        NackStatus.WRITES_NOT_ACCEPTED_IN_CURRENT_APPLICATION_MODE,
+        NackStatus.VALUE_OUT_OF_RANGE,
+    ],
+)
+async def test_protocol_nack_terminal_status_does_not_retry(
+    protocol: _AprilaireClientProtocol, status: NackStatus
+):
+    """Spec section H.5: every status code other than the three retryable
+    ones has an action of just "Clear the transaction from the queue" - no
+    retry at all, not even once."""
+
+    protocol._retry_packet = AsyncMock()
+
+    original_packet = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+    await protocol._send_packet(original_packet)
+    sequence = original_packet.sequence
+
+    protocol.data_received(_nack_frame(sequence, int(status)))
+
+    assert protocol._retry_packet.call_count == 0
+    assert sequence not in protocol._in_flight_requests
+
+
+async def test_protocol_nack_unknown_status_treated_as_terminal(
+    protocol: _AprilaireClientProtocol,
+):
+    """A status code this client doesn't recognize (not defined in
+    `NackStatus`) must not be assumed retryable - only the three codes spec
+    section H.5 explicitly calls out are retried."""
+
+    protocol._retry_packet = AsyncMock()
+
+    original_packet = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+    await protocol._send_packet(original_packet)
+    sequence = original_packet.sequence
+
+    # 0x0D is not one of spec section H.5's defined status codes.
+    protocol.data_received(_nack_frame(sequence, 0x0D))
+
+    assert protocol._retry_packet.call_count == 0
+    assert sequence not in protocol._in_flight_requests
+
+
+async def test_protocol_retry_packet_reuses_sequence_and_delay_in_range(
+    protocol: _AprilaireClientProtocol,
+):
+    """Spec section F note 3: "Retries of a packet will use the same
+    sequence number as the initial packet" - `_retry_packet` must re-queue
+    the exact same packet object (so its `.sequence` is untouched) rather
+    than allocating a new one, after spec section H.5's "0.5 to 1 second
+    delay between retries"."""
+
+    sleep_mock = AsyncMock()
+    protocol.packet_queue.put = AsyncMock()
+
+    packet = Packet(Action.WRITE, FunctionalDomain.CONTROL, 1, sequence=42)
+
+    with patch("asyncio.sleep", new=sleep_mock):
+        await protocol._retry_packet(packet)
+
+    assert sleep_mock.call_count == 1
+    (delay,) = sleep_mock.call_args[0]
+    assert 0.5 <= delay <= 1.0
+
+    protocol.packet_queue.put.assert_awaited_once_with(packet)
+    assert packet.sequence == 42
+
+
+async def test_protocol_nack_in_flight_record_cleared_on_success(
+    protocol: _AprilaireClientProtocol,
+):
+    """A genuine (non-NACK) response for a sequence number must clear that
+    sequence's in-flight record - otherwise a late, spurious NACK reusing
+    the same sequence number (after it wraps around) could be mistaken for
+    belonging to the completed request."""
+
+    original_packet = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+    await protocol._send_packet(original_packet)
+    sequence = original_packet.sequence
+
+    assert sequence in protocol._in_flight_requests
+
+    # A Control/1 Read Response, carrying the same sequence as the request.
+    frame = [1, sequence, 0, 7, 3, 2, 1, 1, 2, 10, 20]
+    frame.append(Packet._generate_crc(frame))
+    protocol.data_received(bytes(frame))
+
+    assert sequence not in protocol._in_flight_requests
+
+
+async def test_protocol_in_flight_requests_bounded_by_sequence_wraparound(
+    protocol: _AprilaireClientProtocol,
+):
+    """`_in_flight_requests` must not grow without bound: since sequence
+    numbers cycle through 0-127 (`_get_sequence`), sending a new request
+    eventually overwrites whatever was previously recorded for that
+    sequence number, capping the dict at 128 entries regardless of how many
+    requests are sent."""
+
+    for _ in range(300):
+        await protocol._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+        )
+
+    size_after_wraparound = len(protocol._in_flight_requests)
+    assert size_after_wraparound <= 128
+
+    for _ in range(50):
+        await protocol._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+        )
+
+    assert len(protocol._in_flight_requests) == size_after_wraparound
+
+
+async def test_protocol_nack_terminal_invokes_callback_with_nack_error(
+    protocol: _AprilaireClientProtocol,
+):
+    """A terminal NACK must report a `NackError` back through
+    `data_received_callback`, carrying the (functional_domain, attribute,
+    sequence) of the request it failed, so `AprilaireClient.data_received`
+    can fail the matching `wait_for_response` future."""
+
+    original_packet = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        data={
+            Attribute.MODE: 0,
+            Attribute.FAN_MODE: 0,
+            Attribute.HEAT_SETPOINT: 70,
+            Attribute.COOL_SETPOINT: 0,
+        },
+    )
+    await protocol._send_packet(original_packet)
+    sequence = original_packet.sequence
+
+    protocol.data_received(_nack_frame(sequence, int(NackStatus.VALUE_OUT_OF_RANGE)))
+
+    assert protocol.data_received_callback.call_count == 1
+
+    functional_domain, attribute, data, callback_sequence = (
+        protocol.data_received_callback.call_args[0]
+    )
+
+    assert functional_domain == FunctionalDomain.CONTROL
+    assert attribute == 1
+    assert isinstance(data, NackError)
+    assert data.status == NackStatus.VALUE_OUT_OF_RANGE
+    assert callback_sequence == sequence
+
+
+async def test_protocol_nack_retrying_does_not_invoke_callback(
+    protocol: _AprilaireClientProtocol,
+):
+    """While a NACK is still being retried, the request has not failed yet
+    - the callback (and therefore the pending future) must not be
+    touched."""
+
+    protocol._retry_packet = AsyncMock()
+
+    original_packet = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+    await protocol._send_packet(original_packet)
+    sequence = original_packet.sequence
+
+    protocol.data_received(
+        _nack_frame(sequence, int(NackStatus.BUFFER_FULL_OR_DEVICE_BUSY))
+    )
+
+    assert protocol.data_received_callback.call_count == 0
+
+
+async def test_client_wait_for_response_raises_nack_error_on_terminal_nack(
+    client: AprilaireClient,
+):
+    """A terminal NACK must fail the pending `wait_for_response` future
+    promptly via `NackError`, rather than leaving the caller to wait out its
+    full timeout only to receive an unexplained `None` (failure mode 3)."""
+
+    functional_domain = FunctionalDomain.CONTROL
+    attribute = 1
+
+    wait_task = asyncio.ensure_future(
+        client.wait_for_response(functional_domain, attribute, 5)
+    )
+    await asyncio.sleep(0)  # let wait_for_response register its future
+
+    nack_error = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
+    await client.data_received(functional_domain, attribute, nack_error, None)
+
+    with pytest.raises(NackError) as exc_info:
+        await asyncio.wait_for(wait_task, 1)
+
+    assert exc_info.value is nack_error
+    assert client.futures == {}
+
+
+async def test_client_data_received_nack_error_not_passed_to_user_callback(
+    client: AprilaireClient,
+):
+    """`NackError` is an internal signal for resolving `wait_for_response`
+    futures - it must never reach the user-supplied `data_received_callback`
+    as if it were response data."""
+
+    nack_error = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
+
+    await client.data_received(FunctionalDomain.CONTROL, 1, nack_error, None)
+
+    client.data_received_callback.assert_not_called()

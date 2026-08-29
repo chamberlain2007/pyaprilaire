@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Callable
 from logging import Logger
 from typing import Any
 
-from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
+from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain, NackStatus
 from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 
@@ -17,6 +18,48 @@ from .socket_client import SocketClient
 # a peer that isn't going to complete one (garbage on the wire, or a stalled
 # connection) - cap it there so such a peer can't grow the buffer forever.
 MAX_BUFFER_SIZE = 65535 + 5
+
+# Spec section H.5 "Action in Case of NACK": these three status codes are the
+# only ones with an action of "Retry 2 additional times with 0.5 to 1 second
+# delay between retries and then clear the transaction from the queue."
+# Every other status code's action is just "Clear the transaction from the
+# queue" - i.e. give up immediately.
+RETRYABLE_NACK_STATUSES = frozenset(
+    {
+        NackStatus.GENERIC_ERROR,
+        NackStatus.BUFFER_FULL_OR_DEVICE_BUSY,
+        NackStatus.TIMED_OUT_WAITING_FOR_RESPONSE,
+    }
+)
+
+# Spec section H.5: "Retry 2 additional times" - i.e. up to 2 retries beyond
+# the original attempt (3 attempts total).
+MAX_NACK_RETRIES = 2
+
+# Spec section H.5: "0.5 to 1 second delay between retries".
+NACK_RETRY_DELAY_RANGE = (0.5, 1.0)
+
+
+class NackError(Exception):
+    """Raised to fail a `wait_for_response` future for a terminally-NACKed
+    request.
+
+    Per spec section H.5, most NACK status codes mean the transaction is
+    simply cleared from the queue - the request has permanently failed and
+    will not be retried. The three codes that are retried
+    (`RETRYABLE_NACK_STATUSES`) only raise this once those retries are
+    exhausted. See `_AprilaireClientProtocol._handle_nack`.
+    """
+
+    def __init__(self, status: NackStatus | None, raw_status: int) -> None:
+        self.status = status
+        self.raw_status = raw_status
+
+        status_description = status.name if status is not None else "UNKNOWN"
+
+        super().__init__(
+            f"Request was NACKed with status {status_description} (0x{raw_status:02X})"
+        )
 
 
 class _AprilaireClientProtocol(asyncio.Protocol):
@@ -41,6 +84,23 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         self.sequence = 0
 
+        # The most recently sent packet for each sequence number, paired
+        # with how many times it has been retried in response to a NACK, so
+        # that a NACK - which only carries the sequence number of the
+        # request that caused it - can be attributed back to that request:
+        # to retry it (spec section H.5; section F note 3 requires reusing
+        # the original sequence number) and/or to know which
+        # (functional_domain, attribute) key a terminal NACK should fail.
+        # See `_handle_nack`.
+        #
+        # Bounded by sequence-number reuse: `_get_sequence` cycles sequence
+        # numbers through 0-127, so sending a new request eventually
+        # overwrites whatever was previously recorded here for that
+        # sequence number, capping this dict at 128 entries. A successful
+        # (non-NACK) response also pops its entry immediately, see
+        # `data_received`.
+        self._in_flight_requests: dict[int, tuple[Packet, int]] = {}
+
         # Bytes received but not yet resolved into complete frames, see
         # `data_received`.
         self._receive_buffer = bytearray()
@@ -55,6 +115,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         it was sent with"""
 
         packet.sequence = self._get_sequence()
+
+        self._in_flight_requests[packet.sequence] = (packet, 0)
 
         self.logger.debug(
             "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
@@ -193,10 +255,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
 
             if isinstance(packet, NackPacket):
-                self.logger.error(
-                    "Received NACK for attribute %d", packet.nack_attribute
-                )
+                self._handle_nack(packet)
                 continue
+
+            # This packet is a genuine (non-NACK) response, so whatever
+            # request shares its sequence number - if any - has succeeded.
+            # See `_in_flight_requests`.
+            self._in_flight_requests.pop(packet.sequence, None)
 
             if Attribute.ERROR in packet.data:
                 error = packet.data[Attribute.ERROR]
@@ -225,6 +290,88 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                         packet.sequence,
                     )
                 )
+
+    def _handle_nack(self, packet: NackPacket) -> None:
+        """Handle a NACK per spec section H.5's "Action in Case of NACK"
+        column.
+
+        `packet.nack_attribute` is, despite its name, the STATUS CODE byte
+        of the FUNCTIONAL DOMAIN / STATUS CODE field (spec section G) - it
+        cannot be renamed at its source (`NackPacket` lives in packet.py,
+        out of scope for this change), so this is where it is turned into
+        something meaningful: a `NackStatus`, used to decide whether to
+        retry the request that caused it, and to fail that request's
+        `wait_for_response` future promptly when it will not be retried
+        (or when retries are exhausted) rather than leaving the caller to
+        wait out its full timeout only to receive an unexplained `None`.
+        """
+        raw_status = packet.nack_attribute
+
+        try:
+            status = NackStatus(raw_status)
+        except ValueError:
+            status = None
+
+        in_flight = self._in_flight_requests.pop(packet.sequence, None)
+
+        if in_flight is not None:
+            original_packet, retry_count = in_flight
+
+            if status in RETRYABLE_NACK_STATUSES and retry_count < MAX_NACK_RETRIES:
+                self.logger.error(
+                    "Received NACK: %s, sequence=%d - retrying (%d/%d)",
+                    status.name,
+                    packet.sequence,
+                    retry_count + 1,
+                    MAX_NACK_RETRIES,
+                )
+
+                self._in_flight_requests[packet.sequence] = (
+                    original_packet,
+                    retry_count + 1,
+                )
+
+                asyncio.ensure_future(self._retry_packet(original_packet))
+                return
+
+        self.logger.error(
+            "Received NACK: %s, sequence=%d",
+            status.name if status is not None else f"unknown status 0x{raw_status:02X}",
+            packet.sequence,
+        )
+
+        if in_flight is None or not self.data_received_callback:
+            return
+
+        original_packet, _ = in_flight
+
+        # Fail the pending `wait_for_response` future (if any) for the
+        # request this NACK terminally failed, rather than leaving it to
+        # time out. `NackError` is only ever meant to reach
+        # `AprilaireClient.data_received`, which recognizes it and calls
+        # `future.set_exception` instead of `future.set_result` - it is
+        # never handed to the user-supplied `data_received_callback` as if
+        # it were response data.
+        asyncio.ensure_future(
+            self.data_received_callback(
+                original_packet.functional_domain,
+                original_packet.attribute,
+                NackError(status, raw_status),
+                packet.sequence,
+            )
+        )
+
+    async def _retry_packet(self, packet: Packet) -> None:
+        """Retry a NACKed packet per spec section H.5.
+
+        Spec section F note 3: "Retries of a packet will use the same
+        sequence number as the initial packet" - so `packet` (whose
+        `.sequence` is already set from the original send) is re-queued
+        as-is rather than going through `_send_packet`, which would
+        allocate a new sequence number.
+        """
+        await asyncio.sleep(random.uniform(*NACK_RETRY_DELAY_RANGE))
+        await self.packet_queue.put(packet)
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Called when the connection to the socket has been lost"""
@@ -530,12 +677,20 @@ class AprilaireClient(SocketClient):
         self,
         functional_domain: FunctionalDomain,
         attribute: int,
-        data: dict[str, Any],
+        data: dict[str, Any] | NackError,
         sequence: int | None = None,
     ):
         """Called when data is received from the thermostat"""
 
-        self.data_received_callback(data)
+        # A `NackError` means the request identified by `functional_domain`,
+        # `attribute`, and `sequence` was terminally NACKed (see
+        # `_AprilaireClientProtocol._handle_nack`) - it is only meant to
+        # fail a matching `wait_for_response` future below, not to be
+        # reported as response data to the user-supplied callback.
+        is_nack_error = isinstance(data, NackError)
+
+        if not is_nack_error:
+            self.data_received_callback(data)
 
         # `FunctionalDomain.NONE` and attribute 0 are both real, meaningful
         # values (e.g. attribute 0 is used by a mapped response) - only the
@@ -569,7 +724,10 @@ class AprilaireClient(SocketClient):
                 continue
 
             try:
-                future.set_result(data)
+                if is_nack_error:
+                    future.set_exception(data)
+                else:
+                    future.set_result(data)
             except asyncio.exceptions.InvalidStateError:
                 pass
 
@@ -621,6 +779,22 @@ class AprilaireClient(SocketClient):
         section H.4). Use this only when that's actually what's wanted
         (e.g. observing the next update to a value, not correlating a
         specific request's answer).
+
+        Returns the response data, `None` on timeout (as before), or raises
+        `NackError` if the request was terminally NACKed - a status code the
+        spec doesn't call for retrying (spec section H.5), or one that was
+        retried and still NACKed after exhausting its retries. This is
+        deliberately distinct from the `None` timeout return: `None` means
+        "no answer arrived in time" (the request may yet succeed, or may
+        already be queued for a NACK retry), while `NackError` means the
+        thermostat explicitly, and permanently, rejected the request - a
+        caller needs to be able to tell those apart to react correctly
+        (e.g. surface a rejected setpoint write to a user, versus silently
+        retrying a slow poll). Raising also lets a caller ignore the
+        distinction entirely with a bare `except NackError`, rather than
+        having to inspect a returned status for every call site - and
+        existing callers that only ever saw `None` keep working unchanged
+        for the timeout case.
         """
 
         loop = asyncio.get_event_loop()
@@ -642,6 +816,14 @@ class AprilaireClient(SocketClient):
                 attribute,
             )
             return None
+        except NackError as exc:
+            self.logger.error(
+                "Received NACK waiting for %s, %d: %s",
+                int(functional_domain),
+                attribute,
+                exc,
+            )
+            raise
         finally:
             # Whether resolved, timed out, or cancelled, this entry must not
             # linger in self.futures - otherwise a timed-out wait leaves a
