@@ -918,6 +918,120 @@ async def test_client_read_iaq_status(
     )
 
 
+@pytest.mark.parametrize(
+    "method_name,functional_domain,attribute,expected_packet",
+    [
+        (
+            "read_sensors_and_wait",
+            FunctionalDomain.SENSORS,
+            2,
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2),
+        ),
+        (
+            "read_control_and_wait",
+            FunctionalDomain.CONTROL,
+            1,
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1),
+        ),
+        (
+            "read_scheduling_and_wait",
+            FunctionalDomain.SCHEDULING,
+            4,
+            Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 4),
+        ),
+        (
+            "read_mac_address_and_wait",
+            FunctionalDomain.IDENTIFICATION,
+            2,
+            Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 2),
+        ),
+        (
+            "read_thermostat_name_and_wait",
+            FunctionalDomain.IDENTIFICATION,
+            5,
+            Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5),
+        ),
+        (
+            "read_thermostat_iaq_available_and_wait",
+            FunctionalDomain.CONTROL,
+            7,
+            Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 7),
+        ),
+        (
+            "read_thermostat_status_and_wait",
+            FunctionalDomain.STATUS,
+            6,
+            Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 6),
+        ),
+        (
+            "read_iaq_status_and_wait",
+            FunctionalDomain.STATUS,
+            7,
+            Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 7),
+        ),
+    ],
+)
+async def test_client_read_and_wait_sends_request_and_waits_on_its_own_sequence(
+    client: AprilaireClient,
+    protocol: _AprilaireClientProtocol,
+    method_name: str,
+    functional_domain: FunctionalDomain,
+    attribute: int,
+    expected_packet: Packet,
+):
+    """Each `read_*_and_wait` method must send its request, then wait pinned
+    to the exact sequence number that specific send used - not whatever
+    `pending_request_sequences` happens to hold by the time the wait
+    starts."""
+
+    wait_for_response_mock = AsyncMock(return_value={"result": "ok"})
+    client.wait_for_response = wait_for_response_mock
+
+    result = await getattr(client, method_name)(5)
+
+    assertPacketQueueContains(protocol, expected_packet)
+
+    sent_sequence = protocol.pending_request_sequences[(functional_domain, attribute)]
+
+    wait_for_response_mock.assert_called_once_with(
+        functional_domain, attribute, 5, sequence=sent_sequence
+    )
+    assert result == {"result": "ok"}
+
+
+async def test_client_read_mac_address_and_wait_pins_to_its_own_sequence(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """Regression test for the actual race: a second, unrelated call to
+    read_mac_address() landing between this call's send and its wait (e.g.
+    from a concurrent task) must not change which sequence this wait ends
+    up pinned to. Before `_and_wait` methods captured their own send's
+    sequence, `wait_for_response` instead looked up "the most recently sent
+    request's sequence" - which the interleaved call would have overwritten
+    by the time the lookup happened."""
+
+    real_read_mac_address = client.read_mac_address
+
+    async def read_mac_address_then_interleave():
+        sequence = await real_read_mac_address()
+        # Simulates a second, concurrent caller sending the same request
+        # before this call gets to wait on its own.
+        await real_read_mac_address()
+        return sequence
+
+    client.read_mac_address = read_mac_address_then_interleave
+
+    wait_for_response_mock = AsyncMock(return_value={"result": "ok"})
+    client.wait_for_response = wait_for_response_mock
+
+    await client.read_mac_address_and_wait(5)
+
+    wait_for_response_mock.assert_called_once_with(
+        FunctionalDomain.IDENTIFICATION, 2, 5, sequence=1
+    )
+    assert protocol.pending_request_sequences[(FunctionalDomain.IDENTIFICATION, 2)] == 2
+
+
 async def test_client_wait_for_response_success(client: AprilaireClient):
     wait_for_mock = AsyncMock(return_value=True)
 
@@ -972,6 +1086,52 @@ async def test_client_wait_for_response_captures_request_sequence(
 
     assert result == "unused"
     assert captured_entries == [(captured_entries[0][0], request_sequence)]
+
+
+async def test_client_wait_for_response_explicit_sequence_bypasses_lookup(
+    client: AprilaireClient,
+):
+    """An explicit `sequence` argument must be used as-is, without ever
+    consulting `pending_request_sequences` - this is what lets
+    `read_mac_address_and_wait` and its siblings pin a wait to the exact
+    sequence their own send used, closing the race where a second send for
+    the same key overwrites the shared "most recent sequence" value before
+    a lookup-based wait gets to read it."""
+
+    captured_entries = []
+
+    async def fake_wait_for(future, timeout):
+        captured_entries.extend(client.futures[(FunctionalDomain.CONTROL, 1)])
+        return "unused"
+
+    with patch("asyncio.wait_for", new=fake_wait_for):
+        result = await client.wait_for_response(
+            FunctionalDomain.CONTROL, 1, 1, sequence=42
+        )
+
+    assert result == "unused"
+    assert captured_entries == [(captured_entries[0][0], 42)]
+
+
+async def test_client_wait_for_response_explicit_none_sequence_skips_lookup(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """Passing `sequence=None` explicitly must be honored as-is (no
+    sequence pinning), not treated the same as omitting the argument -
+    only omitting it triggers the `pending_request_sequences` fallback."""
+
+    protocol.pending_request_sequences[(FunctionalDomain.CONTROL, 1)] = 99
+
+    captured_entries = []
+
+    async def fake_wait_for(future, timeout):
+        captured_entries.extend(client.futures[(FunctionalDomain.CONTROL, 1)])
+        return "unused"
+
+    with patch("asyncio.wait_for", new=fake_wait_for):
+        await client.wait_for_response(FunctionalDomain.CONTROL, 1, 1, sequence=None)
+
+    assert captured_entries == [(captured_entries[0][0], None)]
 
 
 async def test_client_data_received_unsolicited_cos_does_not_resolve_pending_read(

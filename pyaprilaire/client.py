@@ -18,6 +18,11 @@ from .socket_client import SocketClient
 # connection) - cap it there so such a peer can't grow the buffer forever.
 MAX_BUFFER_SIZE = 65535 + 5
 
+# Sentinel distinguishing "no sequence argument passed" from an explicit
+# `sequence=None` (which would mean "match by (functional_domain, attribute)
+# only, don't pin to any sequence"). See `AprilaireClient.wait_for_response`.
+_SEQUENCE_UNSET = object()
+
 
 class _AprilaireClientProtocol(asyncio.Protocol):
     """Protocol for interacting with the thermostat over socket connection"""
@@ -62,8 +67,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         return self.sequence
 
-    async def _send_packet(self, packet: Packet) -> None:
-        """Send a command to the thermostat"""
+    async def _send_packet(self, packet: Packet) -> int:
+        """Send a command to the thermostat, returning the sequence number
+        it was sent with"""
 
         packet.sequence = self._get_sequence()
 
@@ -80,6 +86,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         )
 
         await self.packet_queue.put(packet)
+
+        return packet.sequence
 
     def _empty_packet_queue(self):
         try:
@@ -261,19 +269,19 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     async def read_sensors(self):
         """Send a request for updated sensor data"""
-        await self._send_packet(
+        return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
         )
 
     async def read_control(self):
         """Send a request for updated control data"""
-        await self._send_packet(
+        return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
         )
 
     async def read_scheduling(self):
         """Send a request for updated scheduling data"""
-        await self._send_packet(
+        return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 4)
         )
 
@@ -442,13 +450,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     async def read_mac_address(self):
         """Send a request to get identification data (including MAC address)"""
-        await self._send_packet(
+        return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 2)
         )
 
     async def read_thermostat_name(self):
         """Send a reques for the thermostat name"""
-        await self._send_packet(
+        return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5)
         )
 
@@ -480,17 +488,21 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     async def read_thermostat_iaq_available(self):
         """Send a request to read the thermostat/IAQ available data"""
-        await self._send_packet(
+        return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 7)
         )
 
     async def read_thermostat_status(self):
         """Send a request to read the thermostat status"""
-        await self._send_packet(Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 6))
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 6)
+        )
 
     async def read_iaq_status(self):
         """Send a request to read the IAQ status"""
-        await self._send_packet(Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 7))
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 7)
+        )
 
 
 class AprilaireClient(SocketClient):
@@ -607,28 +619,46 @@ class AprilaireClient(SocketClient):
         self.stop_listen()
 
     async def wait_for_response(
-        self, functional_domain: FunctionalDomain, attribute: int, timeout: int = None
+        self,
+        functional_domain: FunctionalDomain,
+        attribute: int,
+        timeout: int = None,
+        sequence: int | None = _SEQUENCE_UNSET,
     ):
-        """Wait for a response for a particular request"""
+        """Wait for a response for a particular request.
+
+        `sequence`, if given, pins this wait to that exact sequence number
+        (see `read_mac_address_and_wait` and its siblings, which pass the
+        value their own send just returned). This must be used whenever the
+        send and the wait aren't a single atomic step from the caller's
+        point of view: looking up "the most recently sent request's
+        sequence" here instead is racy - a second call to the same
+        `read_*`/`set_*` method between this caller's send and its call to
+        `wait_for_response` would overwrite `pending_request_sequences`
+        before this method ever reads it, pinning this wait to the wrong
+        request.
+        """
 
         loop = asyncio.get_event_loop()
         future = loop.create_future()
 
         future_key = (functional_domain, attribute)
 
-        # Capture the sequence number of the most recently sent request for
-        # this (functional_domain, attribute), if there is one, so the
-        # response can be correlated back to that specific request rather
-        # than to any packet that happens to share its domain/attribute -
-        # see `data_received`. This relies on the normal request/wait
-        # pattern (send the request, then call this method), so the
-        # sequence is already recorded by the time it's read here; if none
-        # is on record (e.g. this is called without a corresponding send,
-        # or the protocol isn't attached yet), the future falls back to the
-        # previous (functional_domain, attribute)-only matching.
-        expected_sequence = None
-        if self.protocol is not None:
-            expected_sequence = self.protocol.pending_request_sequences.get(future_key)
+        if sequence is not _SEQUENCE_UNSET:
+            expected_sequence = sequence
+        else:
+            # Fallback for a caller that didn't capture its own send's
+            # sequence: use the sequence number of the most recently sent
+            # request for this (functional_domain, attribute), if there is
+            # one, so the response can still be correlated back to a
+            # request rather than to any packet that happens to share its
+            # domain/attribute - see `data_received`. Racy as described
+            # above; kept only for callers that predate sequence capture.
+            expected_sequence = None
+            if self.protocol is not None:
+                expected_sequence = self.protocol.pending_request_sequences.get(
+                    future_key
+                )
 
         entry = (future, expected_sequence)
 
@@ -662,15 +692,36 @@ class AprilaireClient(SocketClient):
 
     async def read_sensors(self):
         """Send a request for updated sensor data"""
-        await self.protocol.read_sensors()
+        return await self.protocol.read_sensors()
+
+    async def read_sensors_and_wait(self, timeout: int = None):
+        """Send a request for updated sensor data and wait for the response"""
+        sequence = await self.read_sensors()
+        return await self.wait_for_response(
+            FunctionalDomain.SENSORS, 2, timeout, sequence=sequence
+        )
 
     async def read_control(self):
         """Send a request for updated control data"""
-        await self.protocol.read_control()
+        return await self.protocol.read_control()
+
+    async def read_control_and_wait(self, timeout: int = None):
+        """Send a request for updated control data and wait for the response"""
+        sequence = await self.read_control()
+        return await self.wait_for_response(
+            FunctionalDomain.CONTROL, 1, timeout, sequence=sequence
+        )
 
     async def read_scheduling(self):
         """Send a request for updated scheduling data"""
-        await self.protocol.read_scheduling()
+        return await self.protocol.read_scheduling()
+
+    async def read_scheduling_and_wait(self, timeout: int = None):
+        """Send a request for updated scheduling data and wait for the response"""
+        sequence = await self.read_scheduling()
+        return await self.wait_for_response(
+            FunctionalDomain.SCHEDULING, 4, timeout, sequence=sequence
+        )
 
     async def update_mode(self, mode: int):
         """Send a request to update the mode"""
@@ -694,11 +745,25 @@ class AprilaireClient(SocketClient):
 
     async def read_mac_address(self):
         """Send a request to read the MAC address"""
-        await self.protocol.read_mac_address()
+        return await self.protocol.read_mac_address()
+
+    async def read_mac_address_and_wait(self, timeout: int = None):
+        """Send a request to read the MAC address and wait for the response"""
+        sequence = await self.read_mac_address()
+        return await self.wait_for_response(
+            FunctionalDomain.IDENTIFICATION, 2, timeout, sequence=sequence
+        )
 
     async def read_thermostat_name(self):
         """Send a request to read the thermostat name"""
-        await self.protocol.read_thermostat_name()
+        return await self.protocol.read_thermostat_name()
+
+    async def read_thermostat_name_and_wait(self, timeout: int = None):
+        """Send a request to read the thermostat name and wait for the response"""
+        sequence = await self.read_thermostat_name()
+        return await self.wait_for_response(
+            FunctionalDomain.IDENTIFICATION, 5, timeout, sequence=sequence
+        )
 
     async def set_dehumidification_setpoint(self, dehumidification_setpoint: int):
         await self.protocol.set_dehumidification_setpoint(dehumidification_setpoint)
@@ -718,12 +783,35 @@ class AprilaireClient(SocketClient):
 
     async def read_thermostat_iaq_available(self):
         """Send a request to read the thermostat/IAQ available data"""
-        await self.protocol.read_thermostat_iaq_available()
+        return await self.protocol.read_thermostat_iaq_available()
+
+    async def read_thermostat_iaq_available_and_wait(self, timeout: int = None):
+        """Send a request to read the thermostat/IAQ available data and wait
+        for the response"""
+        sequence = await self.read_thermostat_iaq_available()
+        return await self.wait_for_response(
+            FunctionalDomain.CONTROL, 7, timeout, sequence=sequence
+        )
 
     async def read_thermostat_status(self):
         """Send a request to read the thermostat status"""
-        await self.protocol.read_thermostat_status()
+        return await self.protocol.read_thermostat_status()
+
+    async def read_thermostat_status_and_wait(self, timeout: int = None):
+        """Send a request to read the thermostat status and wait for the
+        response"""
+        sequence = await self.read_thermostat_status()
+        return await self.wait_for_response(
+            FunctionalDomain.STATUS, 6, timeout, sequence=sequence
+        )
 
     async def read_iaq_status(self):
         """Send a request to read the IAQ status"""
-        await self.protocol.read_iaq_status()
+        return await self.protocol.read_iaq_status()
+
+    async def read_iaq_status_and_wait(self, timeout: int = None):
+        """Send a request to read the IAQ status and wait for the response"""
+        sequence = await self.read_iaq_status()
+        return await self.wait_for_response(
+            FunctionalDomain.STATUS, 7, timeout, sequence=sequence
+        )
