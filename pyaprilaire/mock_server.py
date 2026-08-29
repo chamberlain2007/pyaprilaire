@@ -7,7 +7,7 @@ import asyncio
 import logging
 
 from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
-from .packet import Packet
+from .packet import MAPPING, NackPacket, Packet
 
 COS_FREQUENCY = 30
 
@@ -89,6 +89,74 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.sequence = 128 + ((self.sequence + 1) % 128)
 
         return self.sequence
+
+    def _send_nack(self, status_code: int, sequence: int) -> None:
+        """Send a NACK with the given status code (spec H.5), echoing the
+        sequence number of the request it corresponds to."""
+        _LOGGER.warning("Sending NACK 0x%02X for sequence %d", status_code, sequence)
+        self.packet_queue.put_nowait(NackPacket(status_code, sequence=sequence))
+
+    def _prescan_raw_frames(self, data: bytes) -> None:
+        """Walk the raw frame stream the same way Packet.parse() does, to
+        catch frames it silently drops before they ever become a Packet the
+        rest of this class can see: an unrecognized action (NACK 0x05), an
+        unrecognized or unsupported functional domain (0x06), or an
+        attribute this action/domain doesn't define (0x07) - spec H.5: "A
+        NAck is sent in response to any unhandled, corrupt, or
+        un-parse-able action received with a suitable status code."
+
+        NOTE: this necessarily duplicates a small amount of Packet.parse()'s
+        header-walking logic (revision/sequence/count/action/domain/
+        attribute + CRC), since Packet.parse() itself silently drops these
+        frames instead of yielding anything the mock could respond to. It
+        intentionally stays out of packet.py, which is outside this
+        change's scope; see the PR description for the packet.py-side fix
+        this should eventually be replaced by (yielding an "unparseable"
+        marker instead of silently dropping the frame).
+        """
+        index = 0
+
+        while index + 7 <= len(data):
+            sequence = data[index + 1]
+            count = (data[index + 2] << 2) | data[index + 3]
+            action_byte = data[index + 4]
+            domain_byte = data[index + 5]
+            attribute = data[index + 6]
+
+            crc_index = index + count + 4
+            if crc_index >= len(data):
+                break
+
+            next_index = crc_index + 1
+
+            if not Packet._verify_crc(data[index:crc_index], data[crc_index]):
+                index = next_index
+                continue
+
+            try:
+                action = Action(action_byte)
+            except ValueError:
+                self._send_nack(0x05, sequence)
+                index = next_index
+                continue
+
+            if action == Action.NACK:
+                index = next_index
+                continue
+
+            try:
+                domain = FunctionalDomain(domain_byte)
+            except ValueError:
+                self._send_nack(0x06, sequence)
+                index = next_index
+                continue
+
+            if action not in MAPPING or domain not in MAPPING[action]:
+                self._send_nack(0x06, sequence)
+            elif attribute not in MAPPING[action][domain]:
+                self._send_nack(0x07, sequence)
+
+            index = next_index
 
     async def _send_status(self):
         """Send the current status"""
@@ -310,13 +378,25 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
                 while packet := self.packet_queue.get_nowait():
                     if self.transport:
-                        serialized_packet = packet.serialize()
+                        try:
+                            serialized_packet = packet.serialize()
+                        except Exception:
+                            _LOGGER.exception(
+                                "Failed to serialize outgoing packet; dropping it "
+                                "and continuing"
+                            )
+                            continue
 
                         _LOGGER.info("Sent data: %s", serialized_packet.hex(" "))
 
                         self.transport.write(serialized_packet)
             except asyncio.QueueEmpty:
                 pass
+            except Exception:
+                # A real device wouldn't drop the connection because one
+                # outgoing packet was bad - log it and keep the loop (and
+                # therefore the connection) alive.
+                _LOGGER.exception("Unexpected error in queue loop")
 
             await asyncio.sleep(QUEUE_FREQUENCY)
 
@@ -330,6 +410,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         _LOGGER.info("Received data: %s", data.hex(" ", 1))
+
+        self._prescan_raw_frames(data)
 
         parsed_packets = Packet.parse(data)
 
@@ -417,6 +499,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 },
                             )
                         )
+                    else:
+                        self._send_nack(0x07, packet.sequence)
                 elif packet.functional_domain == FunctionalDomain.SENSORS:
                     if packet.attribute == 2:
                         self.packet_queue.put_nowait(
@@ -437,6 +521,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 },
                             )
                         )
+                    else:
+                        self._send_nack(0x07, packet.sequence)
                 elif packet.functional_domain == FunctionalDomain.SCHEDULING:
                     if packet.attribute == 4:
                         self.packet_queue.put_nowait(
@@ -448,6 +534,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 data={Attribute.HOLD: self.hold},
                             )
                         )
+                    else:
+                        self._send_nack(0x07, packet.sequence)
                 elif packet.functional_domain == FunctionalDomain.IDENTIFICATION:
                     if packet.attribute == 2:
                         self.packet_queue.put_nowait(
@@ -472,8 +560,23 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 },
                             )
                         )
+                    else:
+                        self._send_nack(0x07, packet.sequence)
+                elif packet.functional_domain == FunctionalDomain.STATUS:
+                    if packet.attribute == 2:
+                        # Sync is write-only (spec 7.2).
+                        self._send_nack(0x20, packet.sequence)
+                    else:
+                        self._send_nack(0x07, packet.sequence)
+                else:
+                    self._send_nack(0x06, packet.sequence)
             elif packet.action == Action.WRITE:
                 if packet.functional_domain == FunctionalDomain.CONTROL:
+                    # Tracks whether attribute 3/4's out-of-range validation
+                    # NACK'd the write, so the shared STATUS/7 COS below
+                    # isn't sent for a write that was actually rejected.
+                    write_accepted = True
+
                     if packet.attribute == 1:
                         if Attribute.MODE in packet.data:
                             new_mode = packet.data[Attribute.MODE]
@@ -552,39 +655,66 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                             )
                         )
                     elif packet.attribute == 3:
-                        self.dehumidification_setpoint = packet.data[
+                        # spec 2.3: 0 = Off, 40-90 = %RH Set Point, everything
+                        # else Reserved. packet.py's humidity decoder already
+                        # returns None for anything > 100; values 91-100
+                        # decode fine but are still out of the spec's range.
+                        new_dehumidification_setpoint = packet.data.get(
                             Attribute.DEHUMIDIFICATION_SETPOINT
-                        ]
-                        self.dehumidification_status = 2
-
-                        self.packet_queue.put_nowait(
-                            Packet(
-                                Action.COS,
-                                FunctionalDomain.CONTROL,
-                                3,
-                                sequence=self._get_sequence(),
-                                data={
-                                    Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
-                                },
-                            )
                         )
+
+                        if new_dehumidification_setpoint is None or not (
+                            new_dehumidification_setpoint == 0
+                            or 40 <= new_dehumidification_setpoint <= 90
+                        ):
+                            self._send_nack(0x10, packet.sequence)
+                            write_accepted = False
+                        else:
+                            self.dehumidification_setpoint = (
+                                new_dehumidification_setpoint
+                            )
+                            self.dehumidification_status = 2
+
+                            self.packet_queue.put_nowait(
+                                Packet(
+                                    Action.COS,
+                                    FunctionalDomain.CONTROL,
+                                    3,
+                                    sequence=self._get_sequence(),
+                                    data={
+                                        Attribute.DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint
+                                    },
+                                )
+                            )
                     elif packet.attribute == 4:
-                        self.humidification_setpoint = packet.data[
+                        # spec 2.4: 0 = Off, 1-7 = Auto Mode Setpoint, 10-50 =
+                        # %RH Setpoint (Manual mode), everything else Reserved.
+                        new_humidification_setpoint = packet.data.get(
                             Attribute.HUMIDIFICATION_SETPOINT
-                        ]
-                        self.humidification_status = 2
-
-                        self.packet_queue.put_nowait(
-                            Packet(
-                                Action.COS,
-                                FunctionalDomain.CONTROL,
-                                4,
-                                sequence=self._get_sequence(),
-                                data={
-                                    Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint
-                                },
-                            )
                         )
+
+                        if new_humidification_setpoint is None or not (
+                            new_humidification_setpoint == 0
+                            or 1 <= new_humidification_setpoint <= 7
+                            or 10 <= new_humidification_setpoint <= 50
+                        ):
+                            self._send_nack(0x10, packet.sequence)
+                            write_accepted = False
+                        else:
+                            self.humidification_setpoint = new_humidification_setpoint
+                            self.humidification_status = 2
+
+                            self.packet_queue.put_nowait(
+                                Packet(
+                                    Action.COS,
+                                    FunctionalDomain.CONTROL,
+                                    4,
+                                    sequence=self._get_sequence(),
+                                    data={
+                                        Attribute.HUMIDIFICATION_SETPOINT: self.humidification_setpoint
+                                    },
+                                )
+                            )
                     elif packet.attribute == 5:
                         self.fresh_air_mode = packet.data[Attribute.FRESH_AIR_MODE]
                         self.fresh_air_event = packet.data[Attribute.FRESH_AIR_EVENT]
@@ -602,7 +732,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                             )
                         )
 
-                    if packet.attribute in [3, 4, 5]:
+                    if write_accepted and packet.attribute in [3, 4, 5]:
                         self.packet_queue.put_nowait(
                             Packet(
                                 Action.COS,
@@ -660,6 +790,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 },
                             )
                         )
+                    elif packet.attribute == 7:
+                        # Thermostat/IAQ Available is read-only (spec K).
+                        self._send_nack(0x11, packet.sequence)
+                    elif packet.attribute not in (1, 3, 4, 5, 6):
+                        self._send_nack(0x07, packet.sequence)
 
                 elif packet.functional_domain == FunctionalDomain.SCHEDULING:
                     if packet.attribute == 4:
@@ -675,9 +810,31 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                                 data={Attribute.HOLD: self.hold},
                             )
                         )
+                    else:
+                        self._send_nack(0x07, packet.sequence)
+                elif packet.functional_domain == FunctionalDomain.SENSORS:
+                    if packet.attribute == 2:
+                        # Controlling Sensor Values is read-only (spec K).
+                        self._send_nack(0x11, packet.sequence)
+                    else:
+                        self._send_nack(0x07, packet.sequence)
+                elif packet.functional_domain == FunctionalDomain.IDENTIFICATION:
+                    if packet.attribute in (1, 2):
+                        # Revision & Model / MAC Address are read-only (spec K).
+                        self._send_nack(0x11, packet.sequence)
+                    else:
+                        self._send_nack(0x07, packet.sequence)
                 elif packet.functional_domain == FunctionalDomain.STATUS:
                     if packet.attribute == 2:
                         asyncio.ensure_future(self._send_status())
+                    elif packet.attribute in (6, 7, 8):
+                        # Thermostat Status / IAQ Status / Thermostat Error
+                        # are all read-only (spec K).
+                        self._send_nack(0x11, packet.sequence)
+                    else:
+                        self._send_nack(0x07, packet.sequence)
+                else:
+                    self._send_nack(0x06, packet.sequence)
 
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
