@@ -303,7 +303,21 @@ def test_identification_2_parse():
 
     packet = packets[0]
 
-    assert packet.data == {Attribute.MAC_ADDRESS: "1:2:3:4:5:6"}
+    assert packet.data == {Attribute.MAC_ADDRESS: "01:02:03:04:05:06"}
+
+
+def test_identification_2_parse_zero_padded_octets():
+    # Regression test: MAC octets under 0x10 used to be formatted without
+    # zero-padding (e.g. "1a" -> "1a" is fine, but 0x00 -> "0" and 0x05 ->
+    # "5"), so the text form of the address depended on its own octet
+    # values. Spec section 8.2 defines these as fixed-width octet values.
+    packets: list[Packet] = list(
+        Packet.parse([1, 1, 0, 9, 3, 8, 2, 0xB4, 0x82, 0x55, 0x00, 0x1A, 0x05, 0x37])
+    )
+
+    packet = packets[0]
+
+    assert packet.data == {Attribute.MAC_ADDRESS: "b4:82:55:00:1a:05"}
 
 
 def test_identification_4_parse():

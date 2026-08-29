@@ -391,7 +391,7 @@ class Packet:
                         mac_address_components = []
 
                         for _ in range(0, 6):
-                            mac_address_components.append(f"{data[data_index]:x}")
+                            mac_address_components.append(f"{data[data_index]:02x}")
                             data_index += 1
 
                         packet.data[attribute_name] = ":".join(mac_address_components)
