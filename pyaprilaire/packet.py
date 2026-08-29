@@ -509,9 +509,28 @@ class Packet:
                 or self.action == Action.READ_RESPONSE
                 or self.action == Action.COS
             ):
-                for attribute_info in MAPPING[self.action][self.functional_domain][
+                mapped_attributes = MAPPING[self.action][self.functional_domain][
                     self.attribute
-                ]:
+                ]
+
+                if self.action == Action.WRITE and not any(
+                    self.data.get(attribute_info[0]) is not None
+                    for attribute_info in mapped_attributes
+                    if attribute_info[0] is not None
+                ):
+                    # Every mapped field is None, so every byte would
+                    # serialize as NULL (spec section G) - a write that
+                    # changes nothing on the device. That's never useful
+                    # deliberately, and is far more likely an empty `data`
+                    # dict reaching here by mistake than an intentional
+                    # no-op write.
+                    raise ValueError(
+                        f"Write to {self.functional_domain!s}/{self.attribute} "
+                        "has no populated fields - every mapped field would "
+                        "serialize as NULL, making this write a no-op"
+                    )
+
+                for attribute_info in mapped_attributes:
                     attribute_name, value_type, extra_attribute_info = (
                         attribute_info[0],
                         attribute_info[1],

@@ -766,11 +766,15 @@ def test_serialize_partial_write_null_defaults_other_fields():
 
 
 def test_serialize_empty_data_all_fields_null():
-    # Regression test: Packet(WRITE, CONTROL, 3, data={}).serialize() used
-    # to raise "'NoneType' object cannot be interpreted as an integer" from
-    # bytes(payload), since HUMIDITY had no null handling either.
+    # Regression test: Packet(_, CONTROL, 3, data={}).serialize() used to
+    # raise "'NoneType' object cannot be interpreted as an integer" from
+    # bytes(payload), since HUMIDITY had no null handling either. Uses COS
+    # rather than WRITE: an all-null WRITE is now rejected outright as a
+    # no-op (see test_serialize_write_with_no_populated_fields_raises) -
+    # this test is about the HUMIDITY null-padding itself, not about WRITE
+    # specifically, and COS/READ_RESPONSE share the same serialization path.
     serialized = Packet(
-        Action.WRITE,
+        Action.COS,
         FunctionalDomain.CONTROL,
         3,
         1,
@@ -778,8 +782,41 @@ def test_serialize_empty_data_all_fields_null():
         data={},
     ).serialize()
 
-    assert serialized == bytes([0x01, 0x00, 0x00, 0x04, 0x01, 0x02, 0x03, 0x00, 0x6C])
+    assert serialized == bytes([0x01, 0x00, 0x00, 0x04, 0x05, 0x02, 0x03, 0x00, 0x62])
     assert len(serialized) == 9
+
+
+def test_serialize_write_with_no_populated_fields_raises():
+    # A WRITE where every mapped field is absent would serialize as an
+    # all-NULL payload - per spec section G that changes nothing on the
+    # device, so it's a no-op write. That's never a deliberate call; it's
+    # far more likely an empty `data` dict reaching here by mistake, so
+    # this fails loudly instead of silently sending a packet that does
+    # nothing.
+    with pytest.raises(ValueError, match="no populated fields"):
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.CONTROL,
+            3,
+            1,
+            0,
+            data={},
+        ).serialize()
+
+
+def test_serialize_write_with_one_populated_field_does_not_raise():
+    # A partial write - at least one mapped field set, the rest left to
+    # null-pad - is the legitimate case this must not reject.
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        1,
+        0,
+        data={Attribute.HEAT_SETPOINT: 21.0},
+    ).serialize()
+
+    assert len(serialized) == 12
 
 
 def test_serialize_text_null_field_occupies_full_length():
