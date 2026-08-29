@@ -555,7 +555,10 @@ class Packet:
                                 payload.append(0)
                             else:
                                 payload.append(ord(data_value[i]))
-                    else:
+                    else:  # pragma: no cover
+                        # Every ValueType member is handled by name above;
+                        # this only guards against a future member being
+                        # added here without a corresponding branch.
                         payload.append(0)
 
         payload_length_high, payload_length_low = self._encode_int_value(len(payload))
