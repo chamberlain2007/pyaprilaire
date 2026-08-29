@@ -520,7 +520,21 @@ class Packet:
 
                     data_value = self.data.get(attribute_name)
 
-                    if (
+                    if data_value is None:
+                        # Spec section G: writing NULL (0x00) for a field
+                        # leaves it unmodified on the thermostat - this is
+                        # the documented mechanism for partial writes, and
+                        # applies to every field absent from `data`. The
+                        # byte count must still match what a populated value
+                        # of this ValueType would occupy.
+                        if value_type == ValueType.MAC_ADDRESS:
+                            payload.extend([0] * 6)
+                        elif value_type == ValueType.TEXT:
+                            text_length = extra_attribute_info[0]
+                            payload.extend([0] * (text_length + 1))
+                        else:
+                            payload.append(0)
+                    elif (
                         value_type == ValueType.INTEGER
                         or value_type == ValueType.INTEGER_REQUIRED
                         or value_type == ValueType.HUMIDITY
