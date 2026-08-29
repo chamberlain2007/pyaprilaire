@@ -503,6 +503,29 @@ def test_serialize_single_packet_no_data():
     assert serialized == bytes([1, 1, 0, 3, 2, 2, 1, 70])
 
 
+def test_spec_section_g_write_example_serialize():
+    # The worked example from spec section G: writing Fan=ON, Heat
+    # Setpoint=21.0C (70F), Cool Setpoint=26.5C (80F), leaving Mode
+    # unwritten (0x00 / null).
+    serialized = Packet(
+        Action.WRITE,
+        FunctionalDomain.CONTROL,
+        1,
+        1,
+        0,
+        data={
+            Attribute.MODE: 0,
+            Attribute.FAN_MODE: 1,
+            Attribute.HEAT_SETPOINT: 21.0,
+            Attribute.COOL_SETPOINT: 26.5,
+        },
+    ).serialize()
+
+    assert serialized == bytes(
+        [0x01, 0x00, 0x00, 0x07, 0x01, 0x02, 0x01, 0x00, 0x01, 0x15, 0x5A, 0x46]
+    )
+
+
 def test_control_1_serialize():
     serialized = Packet(
         Action.READ_RESPONSE,
