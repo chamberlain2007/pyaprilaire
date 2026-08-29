@@ -44,7 +44,7 @@ packaging==26.3
     #   pytest
 pip-tools==7.6.1
     # via pyaprilaire (pyproject.toml)
-platformdirs==4.11.2
+platformdirs==4.11.4
     # via virtualenv
 pluggy==1.6.0
     # via pytest
