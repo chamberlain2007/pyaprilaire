@@ -217,6 +217,72 @@ async def test_reconnect_reconnecting(client: SocketClient):
 
 
 @patch_socket
+async def test_reconnect_stopped(client: SocketClient):
+    client.stopped = True
+
+    sleep_mock = AsyncMock()
+
+    with patch("asyncio.sleep", new=sleep_mock):
+        await client._reconnect(10)
+
+    assert sleep_mock.await_count == 0
+    assert client.stopped
+    assert not client.connected
+    assert not client.reconnecting
+
+
+async def test_reconnect_exception_no_retry_when_stopped(client: SocketClient):
+    client.stopped = False
+
+    sleep_mock = AsyncMock()
+
+    def create_connection(*args, **kwargs):  # pylint: disable=unused-arguments
+        # Simulate stop_listen() being called while the connection attempt
+        # is in flight (e.g. from another task).
+        client.stopped = True
+        raise Exception("Test failure")  # pylint: disable=broad-exception-raised
+
+    create_connection_mock = AsyncMock(side_effect=create_connection)
+    ensure_future_mock = Mock()
+
+    with (
+        patch("asyncio.sleep", new=sleep_mock),
+        patch("asyncio.BaseEventLoop.create_connection", new=create_connection_mock),
+        patch("asyncio.ensure_future", new=ensure_future_mock),
+    ):
+        await client._reconnect(10)
+
+    assert sleep_mock.await_count == 1
+    assert client.stopped
+    assert not client.connected
+    assert not client.reconnecting
+    ensure_future_mock.assert_not_called()
+
+
+@patch_socket
+async def test_reconnect_noop_after_stop_listen(client: SocketClient):
+    """A reconnect triggered after stop_listen() (e.g. by the protocol's
+    connection_lost handler firing once the transport actually closes) must
+    not open a new connection."""
+
+    await client.start_listen()
+
+    assert client.connected
+    assert not client.stopped
+
+    client.stop_listen()
+
+    assert client.stopped
+    assert not client.connected
+
+    await client._reconnect()
+
+    assert client.stopped
+    assert not client.connected
+    assert not client.reconnecting
+
+
+@patch_socket
 async def test_reconnect_once(client: SocketClient):
     await client._reconnect_once()
 

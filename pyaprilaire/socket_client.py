@@ -86,7 +86,7 @@ class SocketClient:
     async def _reconnect(self, connect_wait_period: int = 0):
         """Reconnect to the socket"""
 
-        if self.reconnecting:
+        if self.stopped or self.reconnecting:
             return
 
         self.reconnecting = True
@@ -123,7 +123,8 @@ class SocketClient:
 
             self.state_changed()
 
-            asyncio.ensure_future(self._reconnect(10))
+            if not self.stopped:
+                asyncio.ensure_future(self._reconnect(10))
 
     async def _reconnect_once(self):
         """Reconnect to the socket without reconnect loop"""
