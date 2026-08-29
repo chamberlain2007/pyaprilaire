@@ -39,50 +39,53 @@ MAPPING = {
     Action.READ_RESPONSE: {
         FunctionalDomain.SETUP: {
             1: [
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
+                (None, None),  # 0 Connected To
+                (None, None),  # 1 Equipment Type
+                (Attribute.TEMPERATURE_SCALE, ValueType.INTEGER),  # 2
+                (None, None),  # 3 Reversing Valve
+                (Attribute.CONTROL_SETUP, ValueType.INTEGER),  # 4
+                (None, None),  # 5 Cooling Stages / Compressor Stages
+                (None, None),  # 6 Heating Stages / Aux Heat Stages
+                (None, None),  # 7 Fan Control in Heating / Aux Equipment Type
+                (None, None),  # 8 Extended Fan - Heat
+                (None, None),  # 9 Extended Fan - Cool
+                (None, None),  # 10 Internal Temp Sensor Offset
+                (None, None),  # 11 Internal RH Sensor Offset
+                (Attribute.AUTO_CHANGEOVER, ValueType.INTEGER),  # 12
+                (Attribute.DEADBAND, ValueType.INTEGER),  # 13
+                (
+                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED,
+                    ValueType.INTEGER,
+                ),  # 14
+                (Attribute.OUTDOOR_SENSOR_INSTALLED, ValueType.INTEGER),  # 15
+                (None, None),  # 16 Reserved
+                (Attribute.RETURN_AIR_SENSOR_INSTALLED, ValueType.INTEGER),  # 17
+                (None, None),  # 18 Compressor Min Off Time
+                (None, None),  # 19 Heating Min Off Time
+                (None, None),  # 20 Equipment Min On Time
+                (None, None),  # 21 Auto Changeover Time
+                (None, None),  # 22 First Stage Differential
+                (None, None),  # 23 Second Stage Differential
+                (None, None),  # 24 Third Stage Differential
+                (None, None),  # 25 Fourth Stage Differential
+                (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),  # 26
+                (Attribute.HEAT_BLAST_AVAILABLE, ValueType.INTEGER),  # 27
+                (None, None),  # 28 Heat Blast Offset
+                (None, None),  # 29 Stage Rate
+                (Attribute.PROGRESSIVE_RECOVERY_AVAILABLE, ValueType.INTEGER),  # 30
+                (None, None),  # 31 Low Balance Point
+                (None, None),  # 32 High Balance Point
+                (Attribute.PROGRAM_FORMAT, ValueType.INTEGER),  # 33
+                (None, None),  # 34 HVAC Service Reminder
+                (None, None),  # 35 Reserved
+                (None, None),  # 36 Turn Off WiFi Radio
+                (None, None),  # 37 Reserved
+                (None, None),  # 38 Support Module Controlling Temp Sensors
+                (None, None),  # 39 Support Module Controlling RH Sensors
+                (None, None),  # 40 Display Monitor Support Module Sensors
+                (None, None),  # 41 8476 Change Air Filter Reminder
+                (None, None),  # 42 8476 Change Water Panel Reminder
+                (None, None),  # 43 8476 Humidifier Type
             ]
         },
         FunctionalDomain.CONTROL: {
@@ -116,16 +119,16 @@ MAPPING = {
         },
         FunctionalDomain.SCHEDULING: {
             4: [
-                (Attribute.HOLD, ValueType.INTEGER),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
-                (None, None),
+                (Attribute.HOLD, ValueType.INTEGER),  # 0
+                (Attribute.HOLD_FAN_MODE, ValueType.INTEGER),  # 1
+                (Attribute.HOLD_HEAT_SETPOINT, ValueType.TEMPERATURE),  # 2
+                (Attribute.HOLD_COOL_SETPOINT, ValueType.TEMPERATURE),  # 3
+                (Attribute.HOLD_DEHUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),  # 4
+                (Attribute.HOLD_END_MINUTE, ValueType.INTEGER),  # 5
+                (Attribute.HOLD_END_HOUR, ValueType.INTEGER),  # 6
+                (Attribute.HOLD_END_DATE, ValueType.INTEGER),  # 7
+                (Attribute.HOLD_END_MONTH, ValueType.INTEGER),  # 8
+                (Attribute.HOLD_END_YEAR, ValueType.INTEGER),  # 9, spec: add 2000
             ],
         },
         FunctionalDomain.SENSORS: {
@@ -211,6 +214,49 @@ MAPPING = {
             ],
         },
         FunctionalDomain.STATUS: {
+            1: [
+                (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, ValueType.INTEGER),  # 0
+                (Attribute.COS_CONTRACTOR_INFORMATION, ValueType.INTEGER),  # 1
+                (
+                    Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS,
+                    ValueType.INTEGER,
+                ),  # 2
+                (
+                    Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS,
+                    ValueType.INTEGER,
+                ),  # 3
+                (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, ValueType.INTEGER),  # 4
+                (
+                    Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
+                    ValueType.INTEGER,
+                ),  # 5
+                (Attribute.COS_DEHUMIDIFICATION_SETPOINT, ValueType.INTEGER),  # 6
+                (Attribute.COS_HUMIDIFICATION_SETPOINT, ValueType.INTEGER),  # 7
+                (Attribute.COS_FRESH_AIR_SETTING, ValueType.INTEGER),  # 8
+                (Attribute.COS_AIR_CLEANING_SETTINGS, ValueType.INTEGER),  # 9
+                (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, ValueType.INTEGER),  # 10
+                (Attribute.COS_SCHEDULE_SETTINGS, ValueType.INTEGER),  # 11
+                (Attribute.COS_AWAY_SETTINGS, ValueType.INTEGER),  # 12
+                (Attribute.COS_SCHEDULE_DAY, ValueType.INTEGER),  # 13
+                (Attribute.COS_SCHEDULE_HOLD, ValueType.INTEGER),  # 14
+                (Attribute.COS_HEAT_BLAST, ValueType.INTEGER),  # 15
+                (Attribute.COS_SERVICE_REMINDERS_STATUS, ValueType.INTEGER),  # 16
+                (Attribute.COS_ALERTS_STATUS, ValueType.INTEGER),  # 17
+                (Attribute.COS_ALERTS_SETTINGS, ValueType.INTEGER),  # 18
+                (Attribute.COS_BACKLIGHT_SETTINGS, ValueType.INTEGER),  # 19
+                (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, ValueType.INTEGER),  # 20
+                (None, None),  # 21 Reserved
+                (Attribute.COS_CONTROLLING_SENSOR_VALUES, ValueType.INTEGER),  # 22
+                (
+                    Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,
+                    ValueType.INTEGER,
+                ),  # 23
+                (Attribute.COS_THERMOSTAT_STATUS, ValueType.INTEGER),  # 24
+                (Attribute.COS_IAQ_STATUS, ValueType.INTEGER),  # 25
+                (Attribute.COS_MODEL_AND_REVISION, ValueType.INTEGER),  # 26
+                (Attribute.COS_SUPPORT_MODULE, ValueType.INTEGER),  # 27
+                (Attribute.COS_LOCKOUTS, ValueType.INTEGER),  # 28
+            ],
             2: [
                 (Attribute.SYNCED, ValueType.INTEGER),
                 (None, None),
@@ -242,7 +288,9 @@ MAPPING = {
                 (Attribute.GAINSPAN_FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
             ],
             2: [
-                (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),
+                (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),  # 0-5
+                (Attribute.FORCE_CONNECTION, ValueType.INTEGER),  # 6
+                (Attribute.CONNECTION_TYPE, ValueType.INTEGER),  # 7
             ],
             4: [
                 (Attribute.LOCATION, ValueType.TEXT, 7),

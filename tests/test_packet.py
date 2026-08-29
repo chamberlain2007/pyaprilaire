@@ -1,7 +1,7 @@
 import pytest
 
 from pyaprilaire.const import Action, Attribute, FunctionalDomain
-from pyaprilaire.packet import NackPacket, Packet
+from pyaprilaire.packet import MAPPING, NackPacket, Packet
 
 # All 17 non-reserved status codes from spec section H.5. 0x00, 0x02 (Generic
 # group) and the bare 0xFF marker's own value are technically "Reserved" /
@@ -421,6 +421,15 @@ def test_scheduling_4_parse():
 
     assert packet.data == {
         Attribute.HOLD: 1,
+        Attribute.HOLD_FAN_MODE: 2,
+        Attribute.HOLD_HEAT_SETPOINT: 3,
+        Attribute.HOLD_COOL_SETPOINT: 4,
+        Attribute.HOLD_DEHUMIDIFICATION_SETPOINT: 5,
+        Attribute.HOLD_END_MINUTE: 6,
+        Attribute.HOLD_END_HOUR: 7,
+        Attribute.HOLD_END_DATE: 8,
+        Attribute.HOLD_END_MONTH: 9,
+        Attribute.HOLD_END_YEAR: 10,
     }
 
 
@@ -700,10 +709,21 @@ def test_scheduling_4_serialize():
         1,
         data={
             Attribute.HOLD: 1,
+            Attribute.HOLD_FAN_MODE: 2,
+            Attribute.HOLD_HEAT_SETPOINT: 3,
+            Attribute.HOLD_COOL_SETPOINT: 4,
+            Attribute.HOLD_DEHUMIDIFICATION_SETPOINT: 5,
+            Attribute.HOLD_END_MINUTE: 6,
+            Attribute.HOLD_END_HOUR: 7,
+            Attribute.HOLD_END_DATE: 8,
+            Attribute.HOLD_END_MONTH: 9,
+            Attribute.HOLD_END_YEAR: 10,
         },
     ).serialize()
 
-    assert serialized == bytes([1, 1, 0, 13, 3, 3, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 55])
+    assert serialized == bytes(
+        [1, 1, 0, 13, 3, 3, 4, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 42]
+    )
 
 
 def test_sensor_2_serialize():
@@ -735,10 +755,14 @@ def test_identification_2_serialize():
         2,
         1,
         1,
-        data={Attribute.MAC_ADDRESS: [1, 2, 3, 4, 5, 6]},
+        data={
+            Attribute.MAC_ADDRESS: [1, 2, 3, 4, 5, 6],
+            Attribute.FORCE_CONNECTION: 1,
+            Attribute.CONNECTION_TYPE: 2,
+        },
     ).serialize()
 
-    assert serialized == bytes([1, 1, 0, 9, 3, 8, 2, 1, 2, 3, 4, 5, 6, 176])
+    assert serialized == bytes([1, 1, 0, 11, 3, 8, 2, 1, 2, 3, 4, 5, 6, 1, 2, 201])
 
 
 def test_serialize_partial_write_null_defaults_other_fields():
@@ -1023,3 +1047,241 @@ def test_identification_4_serialize():
             180,
         ]
     )
+
+
+def _build_frame(action: int, functional_domain: int, attribute: int, data: list[int]):
+    """Build a well-formed frame (with a correct CRC) for the given payload."""
+    payload = [action, functional_domain, attribute] + data
+    header = [1, 0, (len(payload) >> 8) & 0xFF, len(payload) & 0xFF]
+    frame = header + payload
+    frame.append(Packet._generate_crc(frame))
+    return bytes(frame)
+
+
+# --- Byte-alignment proof -------------------------------------------------
+#
+# For each newly-populated MAPPING list, build a synthetic payload where byte
+# N == N (skipping MAC_ADDRESS's own N..N+5 sub-range), parse it, and assert
+# that every named attribute reads back its own spec byte offset. This guards
+# against an off-by-one silently mis-mapping a field to the wrong byte.
+
+
+def test_setup_1_list_length_matches_spec():
+    # Spec 1.1: Thermostat Installer Settings is 44 bytes (byte 0 - byte 43).
+    assert len(MAPPING[Action.READ_RESPONSE][FunctionalDomain.SETUP][1]) == 44
+
+
+def test_scheduling_4_list_length_matches_spec():
+    # Spec 3.4: Schedule Hold is 10 bytes (byte 0 - byte 9).
+    assert len(MAPPING[Action.READ_RESPONSE][FunctionalDomain.SCHEDULING][4]) == 10
+
+
+def test_identification_2_list_length_matches_spec():
+    # Spec 8.2: MAC Address is 8 bytes (byte 0 - byte 7), but the MAC address
+    # itself is a single mapping entry spanning bytes 0-5.
+    assert len(MAPPING[Action.READ_RESPONSE][FunctionalDomain.IDENTIFICATION][2]) == 3
+
+
+def test_status_1_list_length_matches_spec():
+    # Spec 7.1: COS Subscriptions is 29 bytes (byte 0 - byte 28).
+    assert len(MAPPING[Action.READ_RESPONSE][FunctionalDomain.STATUS][1]) == 29
+
+
+def test_setup_1_byte_alignment():
+    packets: list[Packet] = list(Packet.parse(_build_frame(3, 1, 1, list(range(44)))))
+
+    packet = packets[0]
+
+    assert packet.data == {
+        Attribute.TEMPERATURE_SCALE: 2,
+        Attribute.CONTROL_SETUP: 4,
+        Attribute.AUTO_CHANGEOVER: 12,
+        Attribute.DEADBAND: 13,
+        Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED: 14,
+        Attribute.OUTDOOR_SENSOR_INSTALLED: 15,
+        Attribute.RETURN_AIR_SENSOR_INSTALLED: 17,
+        Attribute.AWAY_AVAILABLE: 26,
+        Attribute.HEAT_BLAST_AVAILABLE: 27,
+        Attribute.PROGRESSIVE_RECOVERY_AVAILABLE: 30,
+        Attribute.PROGRAM_FORMAT: 33,
+    }
+
+
+def test_scheduling_4_byte_alignment():
+    packets: list[Packet] = list(Packet.parse(_build_frame(3, 3, 4, list(range(10)))))
+
+    packet = packets[0]
+
+    assert packet.data == {
+        Attribute.HOLD: 0,
+        Attribute.HOLD_FAN_MODE: 1,
+        Attribute.HOLD_HEAT_SETPOINT: 2,
+        Attribute.HOLD_COOL_SETPOINT: 3,
+        Attribute.HOLD_DEHUMIDIFICATION_SETPOINT: 4,
+        Attribute.HOLD_END_MINUTE: 5,
+        Attribute.HOLD_END_HOUR: 6,
+        Attribute.HOLD_END_DATE: 7,
+        Attribute.HOLD_END_MONTH: 8,
+        Attribute.HOLD_END_YEAR: 9,
+    }
+
+
+def test_identification_2_byte_alignment():
+    packets: list[Packet] = list(Packet.parse(_build_frame(3, 8, 2, list(range(8)))))
+
+    packet = packets[0]
+
+    assert packet.data == {
+        Attribute.MAC_ADDRESS: "00:01:02:03:04:05",
+        Attribute.FORCE_CONNECTION: 6,
+        Attribute.CONNECTION_TYPE: 7,
+    }
+
+
+def test_status_1_byte_alignment():
+    packets: list[Packet] = list(Packet.parse(_build_frame(3, 7, 1, list(range(29)))))
+
+    packet = packets[0]
+
+    assert packet.data == {
+        Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS: 0,
+        Attribute.COS_CONTRACTOR_INFORMATION: 1,
+        Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS: 2,
+        Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS: 3,
+        Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS: 4,
+        Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS: 5,
+        Attribute.COS_DEHUMIDIFICATION_SETPOINT: 6,
+        Attribute.COS_HUMIDIFICATION_SETPOINT: 7,
+        Attribute.COS_FRESH_AIR_SETTING: 8,
+        Attribute.COS_AIR_CLEANING_SETTINGS: 9,
+        Attribute.COS_THERMOSTAT_IAQ_AVAILABLE: 10,
+        Attribute.COS_SCHEDULE_SETTINGS: 11,
+        Attribute.COS_AWAY_SETTINGS: 12,
+        Attribute.COS_SCHEDULE_DAY: 13,
+        Attribute.COS_SCHEDULE_HOLD: 14,
+        Attribute.COS_HEAT_BLAST: 15,
+        Attribute.COS_SERVICE_REMINDERS_STATUS: 16,
+        Attribute.COS_ALERTS_STATUS: 17,
+        Attribute.COS_ALERTS_SETTINGS: 18,
+        Attribute.COS_BACKLIGHT_SETTINGS: 19,
+        Attribute.COS_THERMOSTAT_LOCATION_AND_NAME: 20,
+        # byte 21 is Reserved and intentionally absent
+        Attribute.COS_CONTROLLING_SENSOR_VALUES: 22,
+        Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT: 23,
+        Attribute.COS_THERMOSTAT_STATUS: 24,
+        Attribute.COS_IAQ_STATUS: 25,
+        Attribute.COS_MODEL_AND_REVISION: 26,
+        Attribute.COS_SUPPORT_MODULE: 27,
+        Attribute.COS_LOCKOUTS: 28,
+    }
+
+
+# --- Round-trip serialize/parse tests for newly-named fields --------------
+
+
+def test_setup_1_round_trip():
+    data = {
+        Attribute.TEMPERATURE_SCALE: 1,
+        Attribute.CONTROL_SETUP: 0,
+        Attribute.AUTO_CHANGEOVER: 1,
+        Attribute.DEADBAND: 2,
+        Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED: 0,
+        Attribute.OUTDOOR_SENSOR_INSTALLED: 2,
+        Attribute.RETURN_AIR_SENSOR_INSTALLED: 0,
+        Attribute.AWAY_AVAILABLE: 1,
+        Attribute.HEAT_BLAST_AVAILABLE: 1,
+        Attribute.PROGRESSIVE_RECOVERY_AVAILABLE: 0,
+        Attribute.PROGRAM_FORMAT: 0,
+    }
+
+    serialized = Packet(
+        Action.READ_RESPONSE, FunctionalDomain.SETUP, 1, 1, 1, data=data
+    ).serialize()
+
+    packets: list[Packet] = list(Packet.parse(serialized))
+
+    assert packets[0].data == data
+
+
+def test_scheduling_4_round_trip():
+    data = {
+        Attribute.HOLD: 1,
+        Attribute.HOLD_FAN_MODE: 2,
+        Attribute.HOLD_HEAT_SETPOINT: 21,
+        Attribute.HOLD_COOL_SETPOINT: 26,
+        Attribute.HOLD_DEHUMIDIFICATION_SETPOINT: 55,
+        Attribute.HOLD_END_MINUTE: 30,
+        Attribute.HOLD_END_HOUR: 17,
+        Attribute.HOLD_END_DATE: 15,
+        Attribute.HOLD_END_MONTH: 6,
+        Attribute.HOLD_END_YEAR: 26,
+    }
+
+    serialized = Packet(
+        Action.WRITE, FunctionalDomain.SCHEDULING, 4, 1, 1, data=data
+    ).serialize()
+
+    packets: list[Packet] = list(Packet.parse(serialized))
+
+    assert packets[0].data == data
+
+
+def test_identification_2_round_trip_with_force_connection_and_connection_type():
+    data = {
+        Attribute.MAC_ADDRESS: [0xB4, 0x82, 0x55, 0x01, 0x02, 0x03],
+        Attribute.FORCE_CONNECTION: 1,
+        Attribute.CONNECTION_TYPE: 1,
+    }
+
+    serialized = Packet(
+        Action.READ_RESPONSE, FunctionalDomain.IDENTIFICATION, 2, 1, 1, data=data
+    ).serialize()
+
+    packets: list[Packet] = list(Packet.parse(serialized))
+
+    assert packets[0].data == {
+        Attribute.MAC_ADDRESS: "b4:82:55:01:02:03",
+        Attribute.FORCE_CONNECTION: 1,
+        Attribute.CONNECTION_TYPE: 1,
+    }
+
+
+def test_status_1_round_trip():
+    data = {
+        Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS: 1,
+        Attribute.COS_CONTRACTOR_INFORMATION: 0,
+        Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS: 1,
+        Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS: 1,
+        Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS: 0,
+        Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS: 1,
+        Attribute.COS_DEHUMIDIFICATION_SETPOINT: 1,
+        Attribute.COS_HUMIDIFICATION_SETPOINT: 1,
+        Attribute.COS_FRESH_AIR_SETTING: 0,
+        Attribute.COS_AIR_CLEANING_SETTINGS: 1,
+        Attribute.COS_THERMOSTAT_IAQ_AVAILABLE: 0,
+        Attribute.COS_SCHEDULE_SETTINGS: 1,
+        Attribute.COS_AWAY_SETTINGS: 1,
+        Attribute.COS_SCHEDULE_DAY: 1,
+        Attribute.COS_SCHEDULE_HOLD: 1,
+        Attribute.COS_HEAT_BLAST: 0,
+        Attribute.COS_SERVICE_REMINDERS_STATUS: 1,
+        Attribute.COS_ALERTS_STATUS: 1,
+        Attribute.COS_ALERTS_SETTINGS: 1,
+        Attribute.COS_BACKLIGHT_SETTINGS: 0,
+        Attribute.COS_THERMOSTAT_LOCATION_AND_NAME: 1,
+        Attribute.COS_CONTROLLING_SENSOR_VALUES: 1,
+        Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT: 0,
+        Attribute.COS_THERMOSTAT_STATUS: 1,
+        Attribute.COS_IAQ_STATUS: 1,
+        Attribute.COS_MODEL_AND_REVISION: 1,
+        Attribute.COS_SUPPORT_MODULE: 0,
+        Attribute.COS_LOCKOUTS: 1,
+    }
+
+    serialized = Packet(
+        Action.READ_RESPONSE, FunctionalDomain.STATUS, 1, 1, 1, data=data
+    ).serialize()
+
+    packets: list[Packet] = list(Packet.parse(serialized))
+
+    assert packets[0].data == data

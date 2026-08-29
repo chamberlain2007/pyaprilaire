@@ -150,3 +150,64 @@ class Attribute(StrEnum):
     NAME = "name"
     OUTDOOR_SENSOR_STATUS = "outdoor_sensor_status"
     OUTDOOR_SENSOR = "outdoor_sensor"
+
+    # Schedule Hold (spec 3.4)
+    HOLD_FAN_MODE = "hold_fan_mode"
+    HOLD_HEAT_SETPOINT = "hold_heat_setpoint"
+    HOLD_COOL_SETPOINT = "hold_cool_setpoint"
+    HOLD_DEHUMIDIFICATION_SETPOINT = "hold_dehumidification_setpoint"
+    HOLD_END_MINUTE = "hold_end_minute"
+    HOLD_END_HOUR = "hold_end_hour"
+    HOLD_END_DATE = "hold_end_date"
+    HOLD_END_MONTH = "hold_end_month"
+    HOLD_END_YEAR = "hold_end_year"
+
+    # Thermostat Installer Settings (spec 1.1)
+    TEMPERATURE_SCALE = "temperature_scale"
+    CONTROL_SETUP = "control_setup"
+    AUTO_CHANGEOVER = "auto_changeover"
+    DEADBAND = "deadband"
+    WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED = (
+        "wired_remote_temperature_sensor_installed"
+    )
+    OUTDOOR_SENSOR_INSTALLED = "outdoor_sensor_installed"
+    RETURN_AIR_SENSOR_INSTALLED = "return_air_sensor_installed"
+    HEAT_BLAST_AVAILABLE = "heat_blast_available"
+    PROGRESSIVE_RECOVERY_AVAILABLE = "progressive_recovery_available"
+    PROGRAM_FORMAT = "program_format"
+
+    # MAC Address (spec 8.2)
+    FORCE_CONNECTION = "force_connection"
+    CONNECTION_TYPE = "connection_type"
+
+    # COS Subscriptions (spec 7.1)
+    COS_INSTALLER_THERMOSTAT_SETTINGS = "cos_installer_thermostat_settings"
+    COS_CONTRACTOR_INFORMATION = "cos_contractor_information"
+    COS_AIR_CLEANING_INSTALLER_SETTINGS = "cos_air_cleaning_installer_settings"
+    COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS = "cos_humidity_control_installer_settings"
+    COS_FRESH_AIR_INSTALLER_SETTINGS = "cos_fresh_air_installer_settings"
+    COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS = (
+        "cos_thermostat_setpoint_and_mode_settings"
+    )
+    COS_DEHUMIDIFICATION_SETPOINT = "cos_dehumidification_setpoint"
+    COS_HUMIDIFICATION_SETPOINT = "cos_humidification_setpoint"
+    COS_FRESH_AIR_SETTING = "cos_fresh_air_setting"
+    COS_AIR_CLEANING_SETTINGS = "cos_air_cleaning_settings"
+    COS_THERMOSTAT_IAQ_AVAILABLE = "cos_thermostat_iaq_available"
+    COS_SCHEDULE_SETTINGS = "cos_schedule_settings"
+    COS_AWAY_SETTINGS = "cos_away_settings"
+    COS_SCHEDULE_DAY = "cos_schedule_day"
+    COS_SCHEDULE_HOLD = "cos_schedule_hold"
+    COS_HEAT_BLAST = "cos_heat_blast"
+    COS_SERVICE_REMINDERS_STATUS = "cos_service_reminders_status"
+    COS_ALERTS_STATUS = "cos_alerts_status"
+    COS_ALERTS_SETTINGS = "cos_alerts_settings"
+    COS_BACKLIGHT_SETTINGS = "cos_backlight_settings"
+    COS_THERMOSTAT_LOCATION_AND_NAME = "cos_thermostat_location_and_name"
+    COS_CONTROLLING_SENSOR_VALUES = "cos_controlling_sensor_values"
+    COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT = "cos_over_the_air_odt_update_timeout"
+    COS_THERMOSTAT_STATUS = "cos_thermostat_status"
+    COS_IAQ_STATUS = "cos_iaq_status"
+    COS_MODEL_AND_REVISION = "cos_model_and_revision"
+    COS_SUPPORT_MODULE = "cos_support_module"
+    COS_LOCKOUTS = "cos_lockouts"
