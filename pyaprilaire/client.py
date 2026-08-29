@@ -71,11 +71,22 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
                 while packet := self.packet_queue.get_nowait():
                     if self.transport:
-                        serialized_packet = packet.serialize()
+                        try:
+                            serialized_packet = packet.serialize()
 
-                        self.logger.info("Sent data: %s", serialized_packet.hex(" "))
+                            self.logger.info(
+                                "Sent data: %s", serialized_packet.hex(" ")
+                            )
 
-                        self.transport.write(serialized_packet)
+                            self.transport.write(serialized_packet)
+                        except Exception:
+                            self.logger.exception(
+                                "Failed to send packet, action=%s, "
+                                "functional_domain=%s, attribute=%s",
+                                packet.action,
+                                packet.functional_domain,
+                                packet.attribute,
+                            )
             except asyncio.QueueEmpty:
                 pass
 
