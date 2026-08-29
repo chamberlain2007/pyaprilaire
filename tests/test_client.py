@@ -151,6 +151,155 @@ def test_protocol_data_received_error(protocol: _AprilaireClientProtocol):
     }
 
 
+def test_protocol_data_received_byte_at_a_time(protocol: _AprilaireClientProtocol):
+    # Regression test: a partial frame used to raise IndexError out of
+    # Packet.parse, which asyncio's transport treats as fatal and closes the
+    # connection. Feeding the frame in one-byte chunks - the worst case for
+    # TCP segmentation - must still parse it correctly with no exception.
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    for byte in frame[:-1]:
+        protocol.data_received(bytes([byte]))
+
+    assert protocol.data_received_callback.call_count == 0
+
+    protocol.data_received(bytes([frame[-1]]))
+
+    assert protocol.data_received_callback.call_count == 1
+
+    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+
+    assert functional_domain == FunctionalDomain.CONTROL
+    assert attribute == 1
+    assert data == {
+        Attribute.MODE: 1,
+        Attribute.FAN_MODE: 2,
+        Attribute.HEAT_SETPOINT: 10,
+        Attribute.COOL_SETPOINT: 20,
+    }
+
+
+@pytest.mark.parametrize("split_index", range(1, 12))
+def test_protocol_data_received_split_at_every_boundary(
+    protocol: _AprilaireClientProtocol, split_index: int
+):
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    protocol.data_received(frame[:split_index])
+
+    assert protocol.data_received_callback.call_count == 0
+
+    protocol.data_received(frame[split_index:])
+
+    assert protocol.data_received_callback.call_count == 1
+
+    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+
+    assert functional_domain == FunctionalDomain.CONTROL
+    assert attribute == 1
+    assert data == {
+        Attribute.MODE: 1,
+        Attribute.FAN_MODE: 2,
+        Attribute.HEAT_SETPOINT: 10,
+        Attribute.COOL_SETPOINT: 20,
+    }
+
+
+def test_protocol_data_received_two_frames_coalesced(
+    protocol: _AprilaireClientProtocol,
+):
+    # One TCP read can carry several frames - this already worked before the
+    # reassembly buffer was added, and must keep working.
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    protocol.data_received(frame + frame)
+
+    assert protocol.data_received_callback.call_count == 2
+
+
+def test_protocol_data_received_split_frame_followed_by_complete_frame(
+    protocol: _AprilaireClientProtocol,
+):
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    # First chunk: the tail end of one frame, split mid-frame, plus a second,
+    # fully complete frame right behind it in the same read.
+    protocol.data_received(frame[:5])
+
+    assert protocol.data_received_callback.call_count == 0
+
+    protocol.data_received(frame[5:] + frame)
+
+    assert protocol.data_received_callback.call_count == 2
+
+    for call_args in protocol.data_received_callback.call_args_list:
+        functional_domain, attribute, data = call_args[0]
+
+        assert functional_domain == FunctionalDomain.CONTROL
+        assert attribute == 1
+        assert data == {
+            Attribute.MODE: 1,
+            Attribute.FAN_MODE: 2,
+            Attribute.HEAT_SETPOINT: 10,
+            Attribute.COOL_SETPOINT: 20,
+        }
+
+
+def test_protocol_data_received_never_completing_frame_capped(
+    protocol: _AprilaireClientProtocol,
+):
+    # A peer that claims a huge frame (CNT close to its 65535 max) but never
+    # finishes sending it must not be allowed to grow the receive buffer
+    # without bound. Declare CNT = 65535 and dribble in data below that cap
+    # without ever completing the frame; once the accumulated buffer would
+    # exceed the max possible frame size, it must be dropped rather than
+    # grown further, and no exception should reach the caller.
+    header = bytes([1, 1, 0xFF, 0xFF])  # REV, SEQ, CNT=65535
+    chunk = bytes([0xAA]) * 4096
+
+    buffer_lengths = []
+
+    for _ in range(20):
+        protocol.data_received(header + chunk)
+
+        buffer_lengths.append(len(protocol._receive_buffer))
+
+        assert buffer_lengths[-1] <= 65535 + 5
+
+    # The buffer must actually have been dropped at some point rather than
+    # merely coincidentally staying under the cap - it would otherwise have
+    # grown monotonically to 20 * 4100 = 82000 bytes.
+    assert any(
+        later < earlier
+        for earlier, later in zip(buffer_lengths, buffer_lengths[1:], strict=False)
+    )
+
+    assert protocol.data_received_callback.call_count == 0
+
+
+def test_protocol_connection_made_resets_receive_buffer(
+    protocol: _AprilaireClientProtocol,
+):
+    protocol._queue_loop = AsyncMock()
+    protocol._update_status = AsyncMock()
+
+    protocol._receive_buffer.extend(b"\x01\x01\x00")
+
+    protocol.connection_made(None)
+
+    assert protocol._receive_buffer == bytearray()
+
+
+def test_protocol_connection_lost_resets_receive_buffer(
+    protocol: _AprilaireClientProtocol,
+):
+    protocol._receive_buffer.extend(b"\x01\x01\x00")
+
+    protocol.connection_lost(None)
+
+    assert protocol._receive_buffer == bytearray()
+
+
 def test_protocol_mode_re_read(protocol: _AprilaireClientProtocol):
     protocol.read_control = AsyncMock()
 
