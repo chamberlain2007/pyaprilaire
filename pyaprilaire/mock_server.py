@@ -71,6 +71,19 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.location = "02134"
         self.mac_address = [1, 2, 3, 4, 5, 6]
 
+        # Written Outdoor Temperature Value (spec 5.4). Defaults to Timed
+        # Out until the automation system writes a value.
+        self.outdoor_sensor_status = 4
+        self.outdoor_sensor_value = 0
+
+        self.error = 0  # No Error (spec 7.8)
+
+        # All COS subscription outputs are enabled by default (spec 7.1). A
+        # WRITE to STATUS 0x01 (COS Subscriptions) overwrites this mask; see
+        # _configure_cos. The mock doesn't yet act on it - that lands with
+        # the Sync-flow fix - it's just stored/parsed correctly for now.
+        self.cos_mask = [1] * 29
+
         self.packet_queue = asyncio.Queue()
 
         # Messages sent by the Thermostat use sequence numbers 128-255
@@ -96,6 +109,17 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         _LOGGER.warning("Sending NACK 0x%02X for sequence %d", status_code, sequence)
         self.packet_queue.put_nowait(NackPacket(status_code, sequence=sequence))
 
+    def _configure_cos(self, raw_mask: list[int]) -> None:
+        """Handle a WRITE to STATUS 0x01 (COS Subscriptions, spec 7.1).
+
+        packet.py's MAPPING has no schema for this attribute - client.py
+        sends it as 29 unstructured raw bytes - so Packet.parse() can't
+        yield it as a Packet the way it does every other attribute; see
+        _prescan_raw_frames for where this is detected instead.
+        """
+        _LOGGER.info("Configuring COS subscriptions: %s", raw_mask)
+        self.cos_mask = raw_mask
+
     def _prescan_raw_frames(self, data: bytes) -> None:
         """Walk the raw frame stream the same way Packet.parse() does, to
         catch frames it silently drops before they ever become a Packet the
@@ -103,7 +127,14 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         unrecognized or unsupported functional domain (0x06), or an
         attribute this action/domain doesn't define (0x07) - spec H.5: "A
         NAck is sent in response to any unhandled, corrupt, or
-        un-parse-able action received with a suitable status code."
+        un-parse-able action received with a suitable status code." Also
+        picks out the WRITE STATUS 0x01 (COS Subscriptions) case - see
+        _configure_cos - which packet.py's parser would otherwise treat the
+        same as any other unmapped attribute, even though it's a legitimate,
+        spec-documented one (spec 7.1), and a READ_REQUEST for SETUP 0x08
+        (Reset), which has no MAPPING schema at all despite being a real,
+        write-only attribute (spec 1.8) - so it gets 0x20 (write-only)
+        instead of the generic 0x07 fallback.
 
         NOTE: this necessarily duplicates a small amount of Packet.parse()'s
         header-walking logic (revision/sequence/count/action/domain/
@@ -151,7 +182,19 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 index = next_index
                 continue
 
-            if action not in MAPPING or domain not in MAPPING[action]:
+            if (
+                action == Action.WRITE
+                and domain == FunctionalDomain.STATUS
+                and attribute == 1
+            ):
+                self._configure_cos(list(data[index + 7 : crc_index]))
+            elif (
+                action == Action.READ_REQUEST
+                and domain == FunctionalDomain.SETUP
+                and attribute == 8
+            ):
+                self._send_nack(0x20, sequence)
+            elif action not in MAPPING or domain not in MAPPING[action]:
                 self._send_nack(0x06, sequence)
             elif attribute not in MAPPING[action][domain]:
                 self._send_nack(0x07, sequence)
@@ -548,11 +591,16 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                             )
                         )
                     elif packet.attribute == 4 or packet.attribute == 5:
+                        # Echo whichever attribute was requested - the
+                        # client correlates responses by (domain,
+                        # attribute), so replying to a 0x05 request with
+                        # 0x04 (as this mock used to) resolves against the
+                        # wrong key and the caller's request never resolves.
                         self.packet_queue.put_nowait(
                             Packet(
                                 Action.READ_RESPONSE,
                                 FunctionalDomain.IDENTIFICATION,
-                                4,
+                                packet.attribute,
                                 sequence=packet.sequence,
                                 data={
                                     Attribute.LOCATION: self.location,
@@ -566,6 +614,60 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     if packet.attribute == 2:
                         # Sync is write-only (spec 7.2).
                         self._send_nack(0x20, packet.sequence)
+                    elif packet.attribute == 6:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.STATUS,
+                                6,
+                                sequence=packet.sequence,
+                                data={
+                                    Attribute.HEATING_EQUIPMENT_STATUS: {
+                                        2: 2,
+                                        4: 7,
+                                    }.get(self.mode, 0),
+                                    Attribute.COOLING_EQUIPMENT_STATUS: {
+                                        3: 2,
+                                        5: 2,
+                                    }.get(self.mode, 0),
+                                    Attribute.PROGRESSIVE_RECOVERY: 0,
+                                    Attribute.FAN_STATUS: (
+                                        1
+                                        if self.fan_mode == 1 or self.fan_mode == 2
+                                        else 0
+                                    ),
+                                },
+                            )
+                        )
+                    elif packet.attribute == 7:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.STATUS,
+                                7,
+                                sequence=packet.sequence,
+                                data={
+                                    Attribute.DEHUMIDIFICATION_STATUS: self.dehumidification_status,
+                                    Attribute.HUMIDIFICATION_STATUS: self.humidification_status,
+                                    Attribute.VENTILATION_STATUS: (
+                                        2 if self.fresh_air_mode else 0
+                                    ),
+                                    Attribute.AIR_CLEANING_STATUS: (
+                                        2 if self.air_cleaning_mode else 0
+                                    ),
+                                },
+                            )
+                        )
+                    elif packet.attribute == 8:
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.READ_RESPONSE,
+                                FunctionalDomain.STATUS,
+                                8,
+                                sequence=packet.sequence,
+                                data={Attribute.ERROR: self.error},
+                            )
+                        )
                     else:
                         self._send_nack(0x07, packet.sequence)
                 else:
@@ -813,7 +915,29 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     else:
                         self._send_nack(0x07, packet.sequence)
                 elif packet.functional_domain == FunctionalDomain.SENSORS:
-                    if packet.attribute == 2:
+                    if packet.attribute == 4:
+                        # spec 5.4: writes always send 0 for the status byte
+                        # and it shouldn't overwrite the real status - but
+                        # receiving a fresh value is exactly what clears a
+                        # Timed Out condition, so treat it as No Error.
+                        self.outdoor_sensor_status = 0
+                        self.outdoor_sensor_value = packet.data.get(
+                            Attribute.OUTDOOR_SENSOR
+                        )
+
+                        self.packet_queue.put_nowait(
+                            Packet(
+                                Action.COS,
+                                FunctionalDomain.SENSORS,
+                                4,
+                                sequence=self._get_sequence(),
+                                data={
+                                    Attribute.OUTDOOR_SENSOR_STATUS: self.outdoor_sensor_status,
+                                    Attribute.OUTDOOR_SENSOR: self.outdoor_sensor_value,
+                                },
+                            )
+                        )
+                    elif packet.attribute == 2:
                         # Controlling Sensor Values is read-only (spec K).
                         self._send_nack(0x11, packet.sequence)
                     else:
