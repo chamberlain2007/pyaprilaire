@@ -331,13 +331,63 @@ class Packet:
         self.raw_data = raw_data
 
     @classmethod
+    def get_parseable_length(self, data: bytes) -> int:
+        """Return how many leading bytes of `data` make up zero or more
+        complete frames.
+
+        Spec section F: a frame is REV(1) SEQ(1) CNT(2, high byte first)
+        PAYLOAD(CNT bytes) CRC(1), i.e. `count + 5` bytes total, and that
+        stride holds regardless of whether the frame turns out to be valid -
+        `parse` below advances by exactly `count + 5` on every branch
+        (unknown action/domain/attribute, a malformed MAC/TEXT payload, a bad
+        CRC, ...). So finding frame boundaries only ever needs REV/SEQ/CNT,
+        never the semantic decoding `parse` does.
+
+        This is the piece a caller that's buffering a byte stream (see
+        `_AprilaireClientProtocol.data_received`) needs: how much of the
+        buffer is safe to hand to `parse` right now, leaving any trailing
+        partial frame for the next call. `parse` itself also tolerates a
+        short/truncated buffer directly (it simply stops rather than raising
+        or reading past the end), so this split is purely about letting a
+        streaming caller know where to cut - not about making `parse` safe.
+        """
+        data_index = 0
+        length = len(data)
+
+        while data_index + 4 <= length:
+            count = data[data_index + 2] << 8 | data[data_index + 3]
+            frame_end = data_index + count + 5
+
+            if frame_end > length:
+                break
+
+            data_index = frame_end
+
+        return data_index
+
+    @classmethod
     def parse(self, data: bytes) -> Iterator[Packet]:
         data_index = 0
 
         while data_index < len(data):
+            # A frame needs at least REV, SEQ, CNT (4 bytes) to know its own
+            # length, and at least 7 bytes to reach ACTION/FUNCTIONAL
+            # DOMAIN/ATTRIBUTE, which are always read at fixed offsets
+            # regardless of CNT. If either isn't available yet (a partial
+            # frame at the end of the buffer), stop without raising - the
+            # caller is expected to re-invoke with more data appended, or is
+            # content to have parsed only the leading complete frames.
+            if data_index + 4 > len(data):
+                break
+
             revision = data[data_index]
             sequence = data[data_index + 1]
             count = data[data_index + 2] << 8 | data[data_index + 3]
+
+            frame_end = data_index + count + 5
+
+            if frame_end > len(data) or data_index + 7 > len(data):
+                break
 
             action = int(data[data_index + 4])
             functional_domain = int(data[data_index + 5])

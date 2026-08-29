@@ -418,6 +418,86 @@ def test_short_text_frame_does_not_desync_following_frame():
     }
 
 
+def test_parse_truncated_buffer_does_not_raise():
+    # Regression test: parse used to index into the buffer with no bounds
+    # checks, so a partial frame raised IndexError (and, via
+    # _AprilaireClientProtocol.data_received, killed the connection). Every
+    # prefix of a valid frame - including the empty prefix - must parse
+    # without raising and simply yield nothing, since none of them contain a
+    # complete frame.
+    frame = [1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]
+
+    for prefix_length in range(len(frame)):
+        packets: list[Packet] = list(Packet.parse(frame[:prefix_length]))
+
+        assert packets == []
+
+
+def test_parse_truncated_buffer_byte_at_a_time_reassembly():
+    # A truncated buffer yields nothing, but once the full frame is
+    # available (as it would be after a caller re-invokes parse with more
+    # buffered data appended) it parses normally.
+    frame = [1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]
+
+    for prefix_length in range(len(frame)):
+        assert list(Packet.parse(frame[:prefix_length])) == []
+
+    packets: list[Packet] = list(Packet.parse(frame))
+
+    assert len(packets) == 1
+    assert packets[0].data == {
+        Attribute.MODE: 1,
+        Attribute.FAN_MODE: 2,
+        Attribute.HEAT_SETPOINT: 10,
+        Attribute.COOL_SETPOINT: 20,
+    }
+
+
+def test_parse_truncated_nack_does_not_raise():
+    nack_frame = [1, 1, 0, 2, 6, 1, 0x63]
+
+    for prefix_length in range(len(nack_frame)):
+        assert list(Packet.parse(nack_frame[:prefix_length])) == []
+
+
+def test_get_parseable_length_empty():
+    assert Packet.get_parseable_length(b"") == 0
+
+
+def test_get_parseable_length_partial_header():
+    # Fewer than 4 bytes - can't even read CNT yet.
+    assert Packet.get_parseable_length(bytes([1, 1, 0])) == 0
+
+
+def test_get_parseable_length_partial_frame():
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    for prefix_length in range(len(frame)):
+        assert Packet.get_parseable_length(frame[:prefix_length]) == 0
+
+    assert Packet.get_parseable_length(frame) == len(frame)
+
+
+def test_get_parseable_length_two_frames_one_partial():
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    assert Packet.get_parseable_length(frame + frame[:5]) == len(frame)
+
+
+def test_get_parseable_length_two_complete_frames():
+    frame = bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107])
+
+    assert Packet.get_parseable_length(frame + frame) == len(frame) * 2
+
+
+def test_two_frames_coalesced_in_one_chunk_both_parsed():
+    frame = [1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]
+
+    packets: list[Packet] = list(Packet.parse(frame + frame))
+
+    assert len(packets) == 2
+
+
 def test_control_1_parse():
     packets: list[Packet] = list(Packet.parse([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]))
 

@@ -11,6 +11,13 @@ from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
 from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 
+# Spec section F: CNT is 2 bytes (0-65535), so a complete frame is at most
+# CNT + 5 (REV, SEQ, CNT high/low, PAYLOAD, CRC) bytes. A receive buffer that
+# grows past this without ever containing a single complete frame can only be
+# a peer that isn't going to complete one (garbage on the wire, or a stalled
+# connection) - cap it there so such a peer can't grow the buffer forever.
+MAX_BUFFER_SIZE = 65535 + 5
+
 
 class _AprilaireClientProtocol(asyncio.Protocol):
     """Protocol for interacting with the thermostat over socket connection"""
@@ -31,6 +38,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         self.packet_queue = asyncio.Queue()
 
         self.sequence = 0
+
+        # Bytes received but not yet resolved into complete frames, see
+        # `data_received`.
+        self._receive_buffer = bytearray()
 
     def _get_sequence(self):
         self.sequence = (self.sequence + 1) % 128
@@ -112,14 +123,61 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         self.transport = transport
         self._empty_packet_queue()
 
+        # A reconnect must not inherit a partial frame left over from
+        # whatever connection preceded this one.
+        self._receive_buffer = bytearray()
+
         asyncio.ensure_future(self._queue_loop())
         asyncio.ensure_future(self._update_status())
+
+    def _parse_received_data(self, data: bytes) -> list[Packet]:
+        """Buffer newly-received bytes and parse whatever complete frames
+        that leaves available.
+
+        A single TCP read can contain several frames, or only part of one -
+        the socket gives no guarantee that frame boundaries line up with
+        read boundaries. `Packet.get_parseable_length` tells us how much of
+        the accumulated buffer is made up of complete frames; anything past
+        that is a partial frame and stays buffered for the next call.
+        """
+        self._receive_buffer.extend(data)
+
+        parseable_length = Packet.get_parseable_length(self._receive_buffer)
+
+        if parseable_length == 0:
+            if len(self._receive_buffer) > MAX_BUFFER_SIZE:  # pragma: no cover
+                # Unreachable given get_parseable_length's contract: a
+                # frame's declared length is capped at MAX_BUFFER_SIZE (CNT
+                # is at most 65535), so a buffer longer than that always
+                # has a resolvable frame boundary at its start, making
+                # parseable_length == 0 impossible here. Kept as a guard in
+                # case that contract ever changes.
+                self.logger.error(
+                    "Discarding %d bytes without a complete frame",
+                    len(self._receive_buffer),
+                )
+                self._receive_buffer = bytearray()
+
+            return []
+
+        parseable_data = bytes(self._receive_buffer[:parseable_length])
+        del self._receive_buffer[:parseable_length]
+
+        return list(Packet.parse(parseable_data))
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
         self.logger.info("Aprilaire data received %s", data.hex(" "))
 
-        parsed_packets = Packet.parse(data)
+        try:
+            parsed_packets = self._parse_received_data(data)
+        except Exception:
+            # Whatever went wrong, it must not propagate out of this
+            # callback: asyncio's transport treats any exception escaping
+            # data_received as fatal and closes the connection (see
+            # asyncio/selector_events.py's _read_ready__data_received).
+            self.logger.exception("Failed to parse received data")
+            return
 
         for packet in parsed_packets:
             self.logger.debug(
@@ -172,6 +230,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             )
 
         self.transport = None
+
+        # Don't let a frame that was only half-received on this connection
+        # bleed into whatever gets received after a reconnect.
+        self._receive_buffer = bytearray()
 
         if self.reconnect_action:
             asyncio.ensure_future(self.reconnect_action())
