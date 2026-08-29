@@ -145,7 +145,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         parseable_length = Packet.get_parseable_length(self._receive_buffer)
 
         if parseable_length == 0:
-            if len(self._receive_buffer) > MAX_BUFFER_SIZE:
+            if len(self._receive_buffer) > MAX_BUFFER_SIZE:  # pragma: no cover
+                # Unreachable given get_parseable_length's contract: a
+                # frame's declared length is capped at MAX_BUFFER_SIZE (CNT
+                # is at most 65535), so a buffer longer than that always
+                # has a resolvable frame boundary at its start, making
+                # parseable_length == 0 impossible here. Kept as a guard in
+                # case that contract ever changes.
                 self.logger.error(
                     "Discarding %d bytes without a complete frame",
                     len(self._receive_buffer),

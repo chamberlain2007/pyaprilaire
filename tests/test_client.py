@@ -132,7 +132,10 @@ def test_protocol_data_received(protocol: _AprilaireClientProtocol):
 
 
 def test_protocol_data_received_nack(protocol: _AprilaireClientProtocol):
-    protocol.data_received(bytes([1, 1, 0, 2, 6, 1, 0]))
+    # CRC must be valid (0x63): NACK frames now have their CRC verified
+    # like any other frame, so a frame with a bad CRC is silently dropped
+    # before ever reaching the NackPacket branch this test exercises.
+    protocol.data_received(bytes([1, 1, 0, 2, 6, 1, 0x63]))
 
     assert protocol.data_received_callback.call_count == 0
 
@@ -149,6 +152,20 @@ def test_protocol_data_received_error(protocol: _AprilaireClientProtocol):
     assert data == {
         "error": 2,
     }
+
+
+def test_protocol_data_received_parse_exception_does_not_propagate(
+    protocol: _AprilaireClientProtocol,
+):
+    # Regression guard: asyncio's transport treats any exception escaping
+    # data_received as fatal and closes the connection, so a failure while
+    # buffering/parsing must be logged and swallowed, not raised.
+    with patch.object(
+        protocol, "_parse_received_data", side_effect=ValueError("boom")
+    ):
+        protocol.data_received(bytes([1, 1, 0, 7, 3, 2, 1, 1, 2, 10, 20, 107]))
+
+    assert protocol.data_received_callback.call_count == 0
 
 
 def test_protocol_data_received_byte_at_a_time(protocol: _AprilaireClientProtocol):
