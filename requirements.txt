@@ -85,7 +85,7 @@ typing-extensions==4.16.0
     #   pip-tools
     #   pytest-asyncio
     #   virtualenv
-virtualenv==21.7.4
+virtualenv==21.7.5
     # via pre-commit
 wheel==0.48.0
     # via pip-tools
