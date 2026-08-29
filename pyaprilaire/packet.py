@@ -304,7 +304,12 @@ class Packet:
             if action == Action.NACK:
                 nack_attribute = int(data[data_index + 5])
 
-                yield NackPacket(nack_attribute)
+                crc_index = data_index + 4 + count
+
+                if crc_index < len(data) and Packet._verify_crc(
+                    data[data_index:crc_index], data[crc_index]
+                ):
+                    yield NackPacket(nack_attribute)
 
                 data_index += count + 5
                 continue

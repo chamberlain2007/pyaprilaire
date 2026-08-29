@@ -128,7 +128,7 @@ def test_count_decoded_high_byte_first():
 
 
 def test_nack_parse():
-    packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0]))
+    packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0x63]))
 
     assert len(packets) == 1
 
@@ -174,9 +174,30 @@ def test_nack_and_packet_parse():
 
 
 def test_nack_packet_parse():
-    packets: list[Packet] = list(Packet.parse([1, 1, 0, 3, 6, 1, 0]))
+    packets: list[Packet] = list(Packet.parse([1, 1, 0, 2, 6, 1, 0x63]))
 
     assert isinstance(packets[0], NackPacket)
+
+
+def test_nack_invalid_crc_rejected():
+    # Regression test: NACK frames used to bypass CRC verification entirely,
+    # so line noise could be misparsed as a spurious NACK. Real CRC for this
+    # frame is 0x71, not the 0x00 given here.
+    packets: list[Packet] = list(
+        Packet.parse([0x01, 0x80, 0x00, 0x02, 0x06, 0x10, 0x00])
+    )
+
+    assert packets == []
+
+
+def test_nack_invalid_crc_and_mismatched_attribute_rejected():
+    packets: list[Packet] = list(
+        Packet.parse(
+            [0x01, 0x80, 0x00, 0x07, 0x03, 0x07, 0x06, 0x02, 0x00, 0x01, 0x01, 0x00]
+        )
+    )
+
+    assert packets == []
 
 
 def test_control_1_parse():
