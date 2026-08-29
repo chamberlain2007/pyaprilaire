@@ -24,7 +24,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def __init__(
         self,
-        data_received_callback: Callable[[FunctionalDomain, int, dict[str, Any]], None],
+        data_received_callback: Callable[
+            [FunctionalDomain, int, dict[str, Any], int | None], None
+        ],
         reconnect_action: Callable[[], None],
         logger: Logger,
     ) -> None:
@@ -39,6 +41,18 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         self.sequence = 0
 
+        # Sequence number of the most recently sent request for each
+        # (functional_domain, attribute), keyed the same way as
+        # `AprilaireClient.futures`. Spec section F notes 2-3: a Read
+        # Response (and any retries of the request) reuse the sequence
+        # number of the request that produced them, so this is what lets
+        # `AprilaireClient.wait_for_response` correlate a response back to
+        # the specific request that asked for it, rather than only
+        # fuzzily matching by (functional_domain, attribute) - which is
+        # also what an unsolicited COS on the same key would match (spec
+        # section H.4).
+        self.pending_request_sequences: dict[tuple[FunctionalDomain, int], int] = {}
+
         # Bytes received but not yet resolved into complete frames, see
         # `data_received`.
         self._receive_buffer = bytearray()
@@ -52,6 +66,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Send a command to the thermostat"""
 
         packet.sequence = self._get_sequence()
+
+        self.pending_request_sequences[(packet.functional_domain, packet.attribute)] = (
+            packet.sequence
+        )
 
         self.logger.debug(
             "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
@@ -214,7 +232,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             if self.data_received_callback:
                 asyncio.ensure_future(
                     self.data_received_callback(
-                        packet.functional_domain, packet.attribute, packet.data
+                        packet.functional_domain,
+                        packet.attribute,
+                        packet.data,
+                        packet.sequence,
                     )
                 )
 
@@ -225,7 +246,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         if self.data_received_callback:
             asyncio.ensure_future(
                 self.data_received_callback(
-                    FunctionalDomain.NONE, 0, {Attribute.AVAILABLE: False}
+                    FunctionalDomain.NONE, 0, {Attribute.AVAILABLE: False}, None
                 )
             )
 
@@ -495,7 +516,16 @@ class AprilaireClient(SocketClient):
             retry_connection_interval,
         )
 
-        self.futures: dict[tuple[FunctionalDomain, int], list[asyncio.Future]] = {}
+        # Each entry pairs a waiter's future with the sequence number (spec
+        # section F notes 2-3) of the request it is waiting on, captured at
+        # `wait_for_response` time - or None if no such request could be
+        # found, in which case the future is only ever matched by
+        # (functional_domain, attribute), same as before sequence tracking
+        # existed. See `data_received` for how that pairing is used to
+        # decide which incoming packet, if any, resolves a given future.
+        self.futures: dict[
+            tuple[FunctionalDomain, int], list[tuple[asyncio.Future, int | None]]
+        ] = {}
 
     async def _reconnect_with_delay(self):
         await super()._reconnect(self.retry_connection_interval)
@@ -506,24 +536,54 @@ class AprilaireClient(SocketClient):
         )
 
     async def data_received(
-        self, functional_domain: FunctionalDomain, attribute: int, data: dict[str, Any]
+        self,
+        functional_domain: FunctionalDomain,
+        attribute: int,
+        data: dict[str, Any],
+        sequence: int | None = None,
     ):
         """Called when data is received from the thermostat"""
 
         self.data_received_callback(data)
 
-        if not functional_domain or not attribute:
+        # `FunctionalDomain.NONE` and attribute 0 are both real, meaningful
+        # values (e.g. attribute 0 is used by a mapped response) - only the
+        # complete absence of a domain/attribute (as in the connection-state
+        # callbacks below, or a caller with nothing to report) should skip
+        # future resolution.
+        if functional_domain is None or attribute is None:
             return
 
         future_key = (functional_domain, attribute)
 
-        futures_to_complete = self.futures.pop(future_key, [])
+        pending_entries = self.futures.pop(future_key, [])
 
-        for future in futures_to_complete:
+        unresolved_entries = []
+
+        for future, expected_sequence in pending_entries:
+            # A future that captured a specific expected sequence number is
+            # pinned to the single request that created it - only a
+            # response (or NACK) carrying that same sequence number may
+            # resolve it. This is what stops an unsolicited COS on the same
+            # (functional_domain, attribute) from resolving a future meant
+            # for a read response (spec section H.4): a device-originated
+            # COS carries a sequence number in the thermostat's 128-255
+            # range (spec section F note 1), which never matches a
+            # 0-127 sequence we generated for our own request. It's also
+            # what lets two concurrent requests for the same key be
+            # resolved independently instead of both being satisfied by
+            # whichever response happens to arrive first.
+            if expected_sequence is not None and expected_sequence != sequence:
+                unresolved_entries.append((future, expected_sequence))
+                continue
+
             try:
                 future.set_result(data)
             except asyncio.exceptions.InvalidStateError:
                 pass
+
+        if unresolved_entries:
+            self.futures[future_key] = unresolved_entries
 
     def state_changed(self):
         """Send data indicating the state as changed"""
@@ -556,10 +616,23 @@ class AprilaireClient(SocketClient):
 
         future_key = (functional_domain, attribute)
 
-        if future_key not in self.futures:
-            self.futures[future_key] = []
+        # Capture the sequence number of the most recently sent request for
+        # this (functional_domain, attribute), if there is one, so the
+        # response can be correlated back to that specific request rather
+        # than to any packet that happens to share its domain/attribute -
+        # see `data_received`. This relies on the normal request/wait
+        # pattern (send the request, then call this method), so the
+        # sequence is already recorded by the time it's read here; if none
+        # is on record (e.g. this is called without a corresponding send,
+        # or the protocol isn't attached yet), the future falls back to the
+        # previous (functional_domain, attribute)-only matching.
+        expected_sequence = None
+        if self.protocol is not None:
+            expected_sequence = self.protocol.pending_request_sequences.get(future_key)
 
-        self.futures[future_key].append(future)
+        entry = (future, expected_sequence)
+
+        self.futures.setdefault(future_key, []).append(entry)
 
         try:
             return await asyncio.wait_for(future, timeout)
@@ -571,6 +644,21 @@ class AprilaireClient(SocketClient):
                 attribute,
             )
             return None
+        finally:
+            # Whether resolved, timed out, or cancelled, this entry must not
+            # linger in self.futures - otherwise a timed-out wait leaves a
+            # stale entry behind forever (data_received only pops entries
+            # when a matching response actually arrives).
+            pending_entries = self.futures.get(future_key)
+
+            if pending_entries is not None:
+                try:
+                    pending_entries.remove(entry)
+                except ValueError:
+                    pass
+
+                if not pending_entries:
+                    self.futures.pop(future_key, None)
 
     async def read_sensors(self):
         """Send a request for updated sensor data"""

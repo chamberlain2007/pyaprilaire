@@ -119,7 +119,9 @@ def test_protocol_data_received(protocol: _AprilaireClientProtocol):
 
     assert protocol.data_received_callback.call_count == 1
 
-    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data, sequence = (
+        protocol.data_received_callback.call_args[0]
+    )
 
     assert functional_domain == FunctionalDomain.CONTROL
     assert attribute == 1
@@ -129,6 +131,7 @@ def test_protocol_data_received(protocol: _AprilaireClientProtocol):
         Attribute.HEAT_SETPOINT: 10,
         Attribute.COOL_SETPOINT: 20,
     }
+    assert sequence == 1
 
 
 def test_protocol_data_received_nack(protocol: _AprilaireClientProtocol):
@@ -145,13 +148,16 @@ def test_protocol_data_received_error(protocol: _AprilaireClientProtocol):
 
     assert protocol.data_received_callback.call_count == 1
 
-    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data, sequence = (
+        protocol.data_received_callback.call_args[0]
+    )
 
     assert functional_domain == FunctionalDomain.STATUS
     assert attribute == 8
     assert data == {
         "error": 2,
     }
+    assert sequence == 1
 
 
 def test_protocol_data_received_parse_exception_does_not_propagate(
@@ -182,7 +188,9 @@ def test_protocol_data_received_byte_at_a_time(protocol: _AprilaireClientProtoco
 
     assert protocol.data_received_callback.call_count == 1
 
-    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data, sequence = (
+        protocol.data_received_callback.call_args[0]
+    )
 
     assert functional_domain == FunctionalDomain.CONTROL
     assert attribute == 1
@@ -192,6 +200,7 @@ def test_protocol_data_received_byte_at_a_time(protocol: _AprilaireClientProtoco
         Attribute.HEAT_SETPOINT: 10,
         Attribute.COOL_SETPOINT: 20,
     }
+    assert sequence == 1
 
 
 @pytest.mark.parametrize("split_index", range(1, 12))
@@ -208,7 +217,9 @@ def test_protocol_data_received_split_at_every_boundary(
 
     assert protocol.data_received_callback.call_count == 1
 
-    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data, sequence = (
+        protocol.data_received_callback.call_args[0]
+    )
 
     assert functional_domain == FunctionalDomain.CONTROL
     assert attribute == 1
@@ -218,6 +229,7 @@ def test_protocol_data_received_split_at_every_boundary(
         Attribute.HEAT_SETPOINT: 10,
         Attribute.COOL_SETPOINT: 20,
     }
+    assert sequence == 1
 
 
 def test_protocol_data_received_two_frames_coalesced(
@@ -248,7 +260,7 @@ def test_protocol_data_received_split_frame_followed_by_complete_frame(
     assert protocol.data_received_callback.call_count == 2
 
     for call_args in protocol.data_received_callback.call_args_list:
-        functional_domain, attribute, data = call_args[0]
+        functional_domain, attribute, data, sequence = call_args[0]
 
         assert functional_domain == FunctionalDomain.CONTROL
         assert attribute == 1
@@ -258,6 +270,7 @@ def test_protocol_data_received_split_frame_followed_by_complete_frame(
             Attribute.HEAT_SETPOINT: 10,
             Attribute.COOL_SETPOINT: 20,
         }
+        assert sequence == 1
 
 
 def test_protocol_data_received_never_completing_frame_capped(
@@ -328,13 +341,16 @@ def test_protocol_connection_lost(protocol: _AprilaireClientProtocol):
 
     assert protocol.data_received_callback.call_count == 1
 
-    functional_domain, attribute, data = protocol.data_received_callback.call_args[0]
+    functional_domain, attribute, data, sequence = (
+        protocol.data_received_callback.call_args[0]
+    )
 
     assert functional_domain == FunctionalDomain.NONE
     assert attribute == 0
     assert data == {
         "available": False,
     }
+    assert sequence is None
 
 
 def test_protocol_get_sequence(protocol: _AprilaireClientProtocol):
@@ -568,10 +584,10 @@ async def test_client_data_received(
 
     future_key = (functional_domain, attribute)
 
-    if future_key not in client.futures:
-        client.futures[future_key] = []
-
-    client.futures[future_key].append(future)
+    # No expected sequence recorded - falls back to matching by
+    # (functional_domain, attribute) alone, same as before sequence
+    # tracking existed.
+    client.futures.setdefault(future_key, []).append((future, None))
 
     await client.data_received(functional_domain, attribute, data)
 
@@ -579,6 +595,7 @@ async def test_client_data_received(
     assert client.data_received_callback.call_args[0][0] == data
 
     assert future.result() == data
+    assert client.futures == {}
 
 
 async def test_client_data_received_empty(client: AprilaireClient):
@@ -594,10 +611,7 @@ async def test_client_data_received_state_error(client: AprilaireClient):
 
     future_key = (functional_domain, attribute)
 
-    if future_key not in client.futures:
-        client.futures[future_key] = []
-
-    client.futures[future_key].append(future)
+    client.futures.setdefault(future_key, []).append((future, None))
 
     future.set_result({})
 
@@ -924,6 +938,141 @@ async def test_client_wait_for_response_timeout(client: AprilaireClient):
         )
 
     assert wait_for_response_result is None
+
+
+# --- Regression tests for the sequence-correlation defects described in
+# spec section F notes 2-3 and section H.4: responses (including COS) are
+# now correlated back to the specific request that caused them via
+# sequence number, rather than only by (functional_domain, attribute). See
+# `AprilaireClient.data_received` and `wait_for_response`, and
+# `_AprilaireClientProtocol._send_packet` / `pending_request_sequences`.
+
+
+async def test_client_wait_for_response_captures_request_sequence(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """`wait_for_response` must capture the sequence number of the request
+    that was just sent for this (functional_domain, attribute), so the
+    response can later be correlated back to it specifically."""
+
+    await protocol.read_dehumidification_setpoint()
+    request_sequence = protocol.pending_request_sequences[(FunctionalDomain.CONTROL, 3)]
+
+    # By the time `wait_for_response` calls `asyncio.wait_for`, it has
+    # already registered its (future, sequence) entry in `self.futures` -
+    # capture that entry from inside the mocked call to inspect it.
+    captured_entries = []
+
+    async def fake_wait_for(future, timeout):
+        captured_entries.extend(client.futures[(FunctionalDomain.CONTROL, 3)])
+        return "unused"
+
+    with patch("asyncio.wait_for", new=fake_wait_for):
+        result = await client.wait_for_response(FunctionalDomain.CONTROL, 3, 1)
+
+    assert result == "unused"
+    assert captured_entries == [(captured_entries[0][0], request_sequence)]
+
+
+async def test_client_data_received_unsolicited_cos_does_not_resolve_pending_read(
+    client: AprilaireClient,
+):
+    """Failure mode 1: an unsolicited COS carrying a different sequence
+    number than the read request must NOT resolve that read's future, even
+    though it shares the same (functional_domain, attribute) - see spec
+    section H.4 ("COS Actions are asynchronous events, a COS transaction
+    may happen in parallel with a Write, Read request action happening in
+    the other direction")."""
+
+    functional_domain = FunctionalDomain.CONTROL
+    attribute = 3  # Dehumidification setpoint
+
+    future = asyncio.get_event_loop().create_future()
+
+    future_key = (functional_domain, attribute)
+    request_sequence = 5
+
+    client.futures[future_key] = [(future, request_sequence)]
+
+    # An unsolicited COS carrying the pre-write value, with a sequence
+    # number that belongs to the thermostat (spec section F note 1: device
+    # sequence numbers are 128-255) rather than to our request.
+    stale_cos_data = {Attribute.DEHUMIDIFICATION_SETPOINT: 40}
+    await client.data_received(functional_domain, attribute, stale_cos_data, 200)
+
+    assert not future.done()
+    assert client.futures[future_key] == [(future, request_sequence)]
+
+    # The actual Read Response, carrying the same sequence number as the
+    # request (spec section F note 2), does resolve it.
+    fresh_data = {Attribute.DEHUMIDIFICATION_SETPOINT: 50}
+    await client.data_received(
+        functional_domain, attribute, fresh_data, request_sequence
+    )
+
+    assert future.done()
+    assert future.result() == fresh_data
+    assert client.futures == {}
+
+
+async def test_client_data_received_concurrent_duplicate_requests_resolved_independently(
+    client: AprilaireClient,
+):
+    """Failure mode 2: two concurrent waiters on the same
+    (functional_domain, attribute), pinned to different request sequence
+    numbers, must each only be resolved by the response matching their own
+    sequence number - not both by whichever response arrives first."""
+
+    functional_domain = FunctionalDomain.CONTROL
+    attribute = 3
+
+    first_future = asyncio.get_event_loop().create_future()
+    second_future = asyncio.get_event_loop().create_future()
+
+    future_key = (functional_domain, attribute)
+    client.futures[future_key] = [(first_future, 5), (second_future, 6)]
+
+    await client.data_received(functional_domain, attribute, {"value": 60}, 6)
+
+    assert second_future.done()
+    assert second_future.result() == {"value": 60}
+    assert not first_future.done()
+    assert client.futures[future_key] == [(first_future, 5)]
+
+    await client.data_received(functional_domain, attribute, {"value": 55}, 5)
+
+    assert first_future.done()
+    assert first_future.result() == {"value": 55}
+    assert client.futures == {}
+
+
+async def test_client_wait_for_response_timeout_removes_future(
+    client: AprilaireClient,
+):
+    """Failure mode 4: a timed-out wait must not leave a stale entry behind
+    in `self.futures` - `asyncio.wait_for` cancels the future, but nothing
+    previously removed the corresponding list entry."""
+
+    result = await client.wait_for_response(FunctionalDomain.CONTROL, 1, 0.01)
+
+    assert result is None
+    assert client.futures == {}
+
+
+async def test_client_wait_for_response_timeout_removes_only_its_own_entry(
+    client: AprilaireClient,
+):
+    """The leak fix must remove only the timed-out entry, leaving sibling
+    waiters on the same key (and other keys) untouched."""
+
+    sibling_future = asyncio.get_event_loop().create_future()
+    future_key = (FunctionalDomain.CONTROL, 1)
+    client.futures[future_key] = [(sibling_future, None)]
+
+    result = await client.wait_for_response(FunctionalDomain.CONTROL, 1, 0.01)
+
+    assert result is None
+    assert client.futures == {future_key: [(sibling_future, None)]}
 
 
 async def test_client_reconnect_with_delay(client: AprilaireClient):

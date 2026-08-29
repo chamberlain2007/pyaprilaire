@@ -224,6 +224,23 @@ def test_nack_packet_parse():
     assert isinstance(packets[0], NackPacket)
 
 
+def test_nack_carries_sequence():
+    # Regression test for failure mode 3: NackPacket used to drop the
+    # parsed sequence number entirely (always defaulting to 0), so a NACK
+    # could never be attributed back to the request that caused it. Spec
+    # section F notes 2-3: retries (and the responses they produce) reuse
+    # the initiating request's sequence number, so that number must survive
+    # parsing.
+    frame = [1, 42, 0, 2, 6, 1]
+    frame.append(Packet._generate_crc(frame))
+
+    packets: list[Packet] = list(Packet.parse(frame))
+
+    assert len(packets) == 1
+    assert isinstance(packets[0], NackPacket)
+    assert packets[0].sequence == 42
+
+
 def test_nack_invalid_crc_rejected():
     # Regression test: NACK frames used to bypass CRC verification entirely,
     # so line noise could be misparsed as a spurious NACK. Real CRC for this
