@@ -295,17 +295,16 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Handle a NACK per spec section H.5's "Action in Case of NACK"
         column.
 
-        `packet.nack_attribute` is, despite its name, the STATUS CODE byte
-        of the FUNCTIONAL DOMAIN / STATUS CODE field (spec section G) - it
-        cannot be renamed at its source (`NackPacket` lives in packet.py,
-        out of scope for this change), so this is where it is turned into
-        something meaningful: a `NackStatus`, used to decide whether to
-        retry the request that caused it, and to fail that request's
-        `wait_for_response` future promptly when it will not be retried
-        (or when retries are exhausted) rather than leaving the caller to
-        wait out its full timeout only to receive an unexplained `None`.
+        `packet.status_code` is the raw STATUS CODE byte of the FUNCTIONAL
+        DOMAIN / STATUS CODE field (spec section G). This is where it is
+        turned into something meaningful: a `NackStatus`, used to decide
+        whether to retry the request that caused it, and to fail that
+        request's `wait_for_response` future promptly when it will not be
+        retried (or when retries are exhausted) rather than leaving the
+        caller to wait out its full timeout only to receive an unexplained
+        `None`.
         """
-        raw_status = packet.nack_attribute
+        raw_status = packet.status_code
 
         try:
             status = NackStatus(raw_status)

@@ -457,7 +457,7 @@ class NackStatus(IntEnum):
     Spec section G documents the byte at this position in the frame as the
     FUNCTIONAL DOMAIN / STATUS CODE field: for every other action it is a
     functional domain, but for a NACK action it is always one of these
-    status codes instead (`NackPacket.nack_attribute` in packet.py is the
+    status codes instead (`NackPacket.status_code` in packet.py is the
     raw, undecoded value of this byte).
     """
 

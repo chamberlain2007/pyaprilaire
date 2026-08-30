@@ -278,7 +278,7 @@ def test_nack_status_code_parse(status_code):
 
     assert len(packets) == 1
     assert isinstance(packets[0], NackPacket)
-    assert packets[0].nack_attribute == status_code
+    assert packets[0].status_code == status_code
 
 
 def test_nack_status_code_outside_functional_domain_range_invalid_crc_rejected():
@@ -307,7 +307,7 @@ def test_nack_status_code_outside_functional_domain_range_no_desync():
 
     assert len(packets) == 2
     assert isinstance(packets[0], NackPacket)
-    assert packets[0].nack_attribute == 0x11
+    assert packets[0].status_code == 0x11
     assert packets[1].action == Action.READ_REQUEST
     assert packets[1].functional_domain == FunctionalDomain.SETUP
     assert packets[1].attribute == 1
