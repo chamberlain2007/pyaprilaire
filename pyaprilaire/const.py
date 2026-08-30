@@ -449,3 +449,34 @@ def get_simple_status(
     """Collapse a spec 7.6/7.7 equipment/IAQ status value to its application simple
     status (Idle/Wait/On/Off), per the parenthetical in those sections."""
     return _SIMPLE_STATUS_MAPS[type(status)][int(status)]
+
+
+class NackStatus(IntEnum):
+    """Status codes carried by a NACK action, per spec section H.5.
+
+    Spec section G documents the byte at this position in the frame as the
+    FUNCTIONAL DOMAIN / STATUS CODE field: for every other action it is a
+    functional domain, but for a NACK action it is always one of these
+    status codes instead (`NackPacket.status_code` in packet.py is the
+    raw, undecoded value of this byte).
+    """
+
+    RESERVED_00 = 0x00
+    GENERIC_ERROR = 0x01
+    RESERVED_02 = 0x02
+    BUFFER_FULL_OR_DEVICE_BUSY = 0x03
+    UNSUPPORTED_PROTOCOL_REVISION = 0x04
+    UNKNOWN_ACTION = 0x05
+    UNKNOWN_FUNCTIONAL_DOMAIN = 0x06
+    UNKNOWN_ATTRIBUTE = 0x07
+    WRITES_NOT_ACCEPTED_IN_CURRENT_APPLICATION_MODE = 0x08
+    TIMED_OUT_WAITING_FOR_RESPONSE = 0x09
+    UNSUPPORTED_MODEL = 0x0A
+    VALUE_OUT_OF_RANGE = 0x10
+    ATTRIBUTE_READ_ONLY = 0x11
+    ATTRIBUTE_NOT_WRITEABLE_IN_CURRENT_CONFIGURATION = 0x12
+    INCORRECT_WRITE_DATA_LENGTH = 0x13
+    ATTRIBUTE_NOT_READABLE = 0x20
+    ATTRIBUTE_NOT_AVAILABLE_TRY_LATER = 0x21
+    INCORRECT_READ_DATA_LENGTH = 0x22
+    EXTENDED = 0xFF

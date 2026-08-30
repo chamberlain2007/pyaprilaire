@@ -408,7 +408,7 @@ class Packet:
                 # range and would otherwise cause valid NACK frames
                 # carrying an out-of-range status code to be silently
                 # dropped.
-                nack_attribute = int(data[data_index + 5])
+                status_code = int(data[data_index + 5])
 
                 crc_index = data_index + 4 + count
 
@@ -420,7 +420,7 @@ class Packet:
                     # number, the same as any other response - so the
                     # sequence parsed from this frame's header must be
                     # preserved rather than dropped.
-                    yield NackPacket(nack_attribute, sequence=sequence)
+                    yield NackPacket(status_code, sequence=sequence)
 
                 data_index += count + 5
                 continue
@@ -601,7 +601,7 @@ class Packet:
 
     def serialize(self) -> bytes:
         if isinstance(self, NackPacket):
-            payload = [int(Action.NACK), self.nack_attribute]
+            payload = [int(Action.NACK), self.status_code]
         else:
             payload = [int(self.action), int(self.functional_domain), self.attribute]
 
@@ -701,7 +701,7 @@ class Packet:
 class NackPacket(Packet):
     def __init__(
         self,
-        nack_attribute: int,
+        status_code: int,
         revision: int = 1,
         sequence: int = 0,
         count: int = 0,
@@ -710,4 +710,4 @@ class NackPacket(Packet):
             Action.NACK, FunctionalDomain.NACK, 0, revision, sequence, count
         )
 
-        self.nack_attribute = nack_attribute
+        self.status_code = status_code
