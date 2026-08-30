@@ -415,7 +415,12 @@ class Packet:
                 if crc_index < len(data) and Packet._verify_crc(
                     data[data_index:crc_index], data[crc_index]
                 ):
-                    yield NackPacket(nack_attribute)
+                    # Spec section F notes 2-3: a NACK must be attributable
+                    # back to the request that caused it via sequence
+                    # number, the same as any other response - so the
+                    # sequence parsed from this frame's header must be
+                    # preserved rather than dropped.
+                    yield NackPacket(nack_attribute, sequence=sequence)
 
                 data_index += count + 5
                 continue
