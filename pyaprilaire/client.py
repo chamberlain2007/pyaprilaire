@@ -72,14 +72,20 @@ COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
 # library's desired subscription value for each.
 #
 # Per spec Appendix J.1: "All COS subscription outputs are enabled by
-# default, but can be disabled if unused to reduce network traffic." The
-# safest general position is that the device's all-enabled default is
-# already a superset of what this library needs, so every byte below stays
-# enabled (1) unless a concrete reason to disable it exists - none do. A
-# caller that knows its own traffic budget can disable individual channels
-# via the `overrides` argument to `configure_cos`.
+# default, but can be disabled if unused to reduce network traffic."
+# Unlike the device's own all-enabled default, this library only enables a
+# channel it actually has a reason to want: either a `read_*`/`set_*`
+# method that consumes the resulting attribute, or one of spec Appendix
+# J's Best Practices items naming a channel as the *only* source for
+# information this library aims to support (even before a dedicated read
+# method exists for it). Every other channel defaults to off; a caller
+# that wants one anyway can turn it back on via the `overrides` argument
+# to `configure_cos`.
 #
 # Notes on specific bytes:
+#   0-4   Installer settings (thermostat, contractor, air cleaning,
+#         humidity control, fresh air) - disabled, nothing in this
+#         library reads them.
 #   5-9   Setpoint/mode, dehumidification, humidification, fresh air, and
 #         air cleaning settings back update_mode()/update_fan_mode()/
 #         update_setpoint()/set_dehumidification_setpoint()/
@@ -88,14 +94,22 @@ COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
 #   11    Schedule Settings - without this, set_hold()/read_scheduling()
 #         are never told whether the user enabled/disabled the onboard
 #         schedule at the thermostat.
-#   12    Away Settings - matches the spec default. Note SCHEDULING/2 has
-#         no packet.py MAPPING entry yet, so these COS packets are
-#         currently parsed off the wire and dropped (see PR notes).
+#   12    Away Settings - disabled. Its data lives at SCHEDULING/2, which
+#         has no packet.py MAPPING entry yet, so enabling this channel
+#         would only make the thermostat send packets that
+#         Packet.parse silently drops before they ever reach a callback
+#         (see its unmapped functional_domain/attribute handling) - pure
+#         wasted traffic today, not just an unused one.
+#   13    Schedule Day - disabled, nothing in this library reads it.
 #   14    Schedule Hold backs set_hold()/read_scheduling().
+#   15    Heat Blast - disabled, nothing in this library reads it.
 #   16    Service Reminders Status - spec J.18: the only channel to
-#         monitor service reminder status.
+#         monitor service reminder status. Kept on despite no dedicated
+#         read method, since a consuming app has no other way to ever
+#         see this data (spec Appendix J Best Practices item).
 #   17-18 Alerts Status/Settings - spec J.19: the only channel for hi/lo
-#         temperature and RH alerts.
+#         temperature and RH alerts. Same reasoning as 16.
+#   19    Backlight Settings - disabled, nothing in this library reads it.
 #   20    Thermostat Location & Name backs read_thermostat_name().
 #   21    Reserved - spec 7.1 defines no semantics for this byte. Paired
 #         with `None` instead of an Attribute: it never enters the
@@ -107,21 +121,25 @@ COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
 #   23    Over the air ODT update timeout - spec J.15: the only
 #         notification that a written ODT
 #         (set_written_outdoor_temperature_value()) is more than 10
-#         minutes stale.
+#         minutes stale. Same reasoning as 16.
 #   24-25 Thermostat/IAQ Status back read_thermostat_status()/
 #         read_iaq_status().
+#   26    Model & Revision - disabled, nothing in this library reads it.
+#   27    Support Module - disabled; support module reads are out of
+#         scope for this library.
+#   28    Lockouts - disabled, nothing in this library reads it.
 COS_SUBSCRIPTIONS = [
-    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 1),  # 0 Installer Thermostat Settings
-    (Attribute.COS_CONTRACTOR_INFORMATION, 1),  # 1 Contractor Information
+    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 0),  # 0 Installer Thermostat Settings
+    (Attribute.COS_CONTRACTOR_INFORMATION, 0),  # 1 Contractor Information
     (
         Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS,
-        1,
+        0,
     ),  # 2 Air Cleaning Installer Variable
     (
         Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS,
-        1,
+        0,
     ),  # 3 Humidity Control Installer Settings
-    (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, 1),  # 4 Fresh Air Installer Settings
+    (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, 0),  # 4 Fresh Air Installer Settings
     (
         Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
         1,
@@ -132,14 +150,14 @@ COS_SUBSCRIPTIONS = [
     (Attribute.COS_AIR_CLEANING_SETTINGS, 1),  # 9 Air Cleaning Settings
     (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, 1),  # 10 Thermostat IAQ Available
     (Attribute.COS_SCHEDULE_SETTINGS, 1),  # 11 Schedule Settings
-    (Attribute.COS_AWAY_SETTINGS, 1),  # 12 Away Settings
-    (Attribute.COS_SCHEDULE_DAY, 1),  # 13 Schedule Day
+    (Attribute.COS_AWAY_SETTINGS, 0),  # 12 Away Settings
+    (Attribute.COS_SCHEDULE_DAY, 0),  # 13 Schedule Day
     (Attribute.COS_SCHEDULE_HOLD, 1),  # 14 Schedule Hold
-    (Attribute.COS_HEAT_BLAST, 1),  # 15 Heat Blast
+    (Attribute.COS_HEAT_BLAST, 0),  # 15 Heat Blast
     (Attribute.COS_SERVICE_REMINDERS_STATUS, 1),  # 16 Service Reminders Status
     (Attribute.COS_ALERTS_STATUS, 1),  # 17 Alerts Status
     (Attribute.COS_ALERTS_SETTINGS, 1),  # 18 Alerts Settings
-    (Attribute.COS_BACKLIGHT_SETTINGS, 1),  # 19 Backlight Settings
+    (Attribute.COS_BACKLIGHT_SETTINGS, 0),  # 19 Backlight Settings
     (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, 1),  # 20 Thermostat Location & Name
     (None, 0),  # 21 Reserved
     (Attribute.COS_CONTROLLING_SENSOR_VALUES, 1),  # 22 Controlling Sensor Values
@@ -149,9 +167,9 @@ COS_SUBSCRIPTIONS = [
     ),  # 23 Over the air ODT update timeout
     (Attribute.COS_THERMOSTAT_STATUS, 1),  # 24 Thermostat Status
     (Attribute.COS_IAQ_STATUS, 1),  # 25 IAQ Status
-    (Attribute.COS_MODEL_AND_REVISION, 1),  # 26 Model & Revision
-    (Attribute.COS_SUPPORT_MODULE, 1),  # 27 Support Module
-    (Attribute.COS_LOCKOUTS, 1),  # 28 Lockouts
+    (Attribute.COS_MODEL_AND_REVISION, 0),  # 26 Model & Revision
+    (Attribute.COS_SUPPORT_MODULE, 0),  # 27 Support Module
+    (Attribute.COS_LOCKOUTS, 0),  # 28 Lockouts
 ]
 
 # The desired mask as a dict, for comparing against a read current mask and

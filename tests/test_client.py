@@ -611,7 +611,7 @@ async def test_protocol_configure_cos_skips_write_when_matching(logger):
 
 async def test_protocol_configure_cos_writes_when_mismatched(logger):
     current = dict(DEFAULT_COS_SUBSCRIPTIONS)
-    current[Attribute.COS_HEAT_BLAST] = 0
+    current[Attribute.COS_DEHUMIDIFICATION_SETPOINT] = 0
 
     wait_for_response_action = AsyncMock(return_value=current)
 
@@ -681,12 +681,12 @@ def test_cos_subscriptions_previously_disabled_dependent_channels_now_enabled():
 
 
 async def test_protocol_configure_cos_overrides(protocol: _AprilaireClientProtocol):
-    await protocol.configure_cos(overrides={Attribute.COS_HEAT_BLAST: 0})
+    await protocol.configure_cos(overrides={Attribute.COS_DEHUMIDIFICATION_SETPOINT: 0})
 
     queue_items = list(protocol.packet_queue._queue)
 
     assert queue_items[0].raw_data == _expected_cos_raw_data(
-        {Attribute.COS_HEAT_BLAST: 0}
+        {Attribute.COS_DEHUMIDIFICATION_SETPOINT: 0}
     )
 
 
