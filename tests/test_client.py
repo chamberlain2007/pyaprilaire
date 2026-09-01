@@ -1051,12 +1051,31 @@ async def test_client_read_cos_subscriptions_and_wait(
     )
 
 
-def test_client_create_protocol_wires_update_status(client: AprilaireClient):
+def test_client_create_protocol_wires_connection_made(client: AprilaireClient):
     # The protocol only knows how to send and receive packets; which
     # requests a fresh connection should make is the client's business.
     created_protocol = client.create_protocol()
 
-    assert created_protocol.connected_action == client._update_status
+    assert created_protocol.connected_action == client.connection_made
+
+
+async def test_client_connection_made_updates_status(client: AprilaireClient):
+    client._update_status = AsyncMock()
+
+    await client.connection_made()
+
+    assert client._update_status.call_count == 1
+
+
+def test_client_connected_attribute_not_shadowed_by_a_method(
+    client: AprilaireClient,
+):
+    # `SocketClient.__init__` sets `self.connected` as a bool, so the
+    # connect hook must not be named `connected` - it would be shadowed on
+    # every instance and, being falsy, silently skipped by the protocol's
+    # `if self.connected_action:` check.
+    assert client.connected is False
+    assert callable(client.connection_made)
 
 
 async def test_client_update_status(

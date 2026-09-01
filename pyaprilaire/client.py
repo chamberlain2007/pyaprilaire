@@ -785,15 +785,26 @@ class AprilaireClient(SocketClient):
             self.data_received,
             self._reconnect_with_delay,
             self.logger,
-            self._update_status,
+            self.connection_made,
         )
+
+    async def connection_made(self):
+        """Called when a connection to the thermostat has been made.
+
+        The client-side counterpart to
+        `_AprilaireClientProtocol.connection_made`, which fires this as its
+        `connected_action` - the same pairing as the protocol's
+        `data_received` and this class's. Everything a fresh connection
+        should do hangs off here.
+        """
+        await self._update_status()
 
     async def _update_status(self):
         """Bring this client's view of the thermostat up to date on a fresh
         connection, per spec Appendix J's Best Practices.
 
-        Passed to the protocol as its `connected_action`, so it runs once
-        per connection - including each hourly reconnect.
+        Runs from `connection_made`, so it happens once per connection -
+        including each hourly reconnect.
         """
         await asyncio.sleep(2)
 
