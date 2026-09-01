@@ -6,7 +6,25 @@ import argparse
 import asyncio
 import logging
 
-from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
+from .const import (
+    QUEUE_FREQUENCY,
+    Action,
+    AirCleaningStatus,
+    Attribute,
+    CoolingEquipmentStatus,
+    DehumidificationStatus,
+    FanMode,
+    FanStatus,
+    FunctionalDomain,
+    HeatingEquipmentStatus,
+    HoldType,
+    HumidificationStatus,
+    HvacMode,
+    NackStatus,
+    SensorStatus,
+    ThermostatError,
+    VentilationStatus,
+)
 from .packet import MAPPING, NackPacket, Packet
 
 # The COS Subscriptions channels (spec 7.1), in wire order, taken straight
@@ -56,19 +74,28 @@ ch.setFormatter(CustomFormatter())
 _LOGGER.addHandler(ch)
 
 
+def _describe_nack_status(status_code: int) -> str:
+    """Name a NACK status code (spec H.5) for logging, falling back to the
+    raw value for a code the spec doesn't define."""
+    try:
+        return f"{NackStatus(status_code).name} (0x{status_code:02X})"
+    except ValueError:
+        return f"0x{status_code:02X}"
+
+
 class _AprilaireServerProtocol(asyncio.Protocol):
     def __init__(self):
         self.transport: asyncio.Transport = None
 
-        self.mode = 5
-        self.fan_mode = 2
+        self.mode = HvacMode.AUTO
+        self.fan_mode = FanMode.AUTO
         self.cool_setpoint = 25
         self.heat_setpoint = 20
-        self.hold = 0
+        self.hold = HoldType.DISABLED
 
-        self.dehumidification_status = 0
+        self.dehumidification_status = DehumidificationStatus.NOT_ACTIVE
         self.dehumidification_setpoint = 60
-        self.humidification_status = 0
+        self.humidification_status = HumidificationStatus.NOT_ACTIVE
         self.humidification_setpoint = 30
         self.fresh_air_mode = 0
         self.fresh_air_event = 0
@@ -77,10 +104,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         # Written Outdoor Temperature Value (spec 5.4). Defaults to Timed
         # Out until the automation system writes a value.
-        self.outdoor_sensor_status = 4
+        self.outdoor_sensor_status = SensorStatus.OPEN
         self.outdoor_sensor_value = 0
 
-        self.error = 0  # No Error (spec 7.8)
+        self.error = ThermostatError.NO_ERROR
 
         # 8840 (spec 8.1) - the mock also serves dehumidification,
         # humidification, fresh air and thermostat-name, all of which the
@@ -139,10 +166,15 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         self.packet_queue.put_nowait(packet)
 
-    def _send_nack(self, status_code: int, sequence: int) -> None:
+    def _send_nack(self, status_code: NackStatus, sequence: int) -> None:
         """Send a NACK with the given status code (spec H.5), echoing the
         sequence number of the request it corresponds to."""
-        _LOGGER.warning("Sending NACK 0x%02X for sequence %d", status_code, sequence)
+        _LOGGER.warning(
+            "Sending NACK %s (0x%02X) for sequence %d",
+            status_code.name,
+            status_code,
+            sequence,
+        )
         self.packet_queue.put_nowait(NackPacket(status_code, sequence=sequence))
 
     def _reply(
@@ -178,29 +210,41 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
     def _status_6_data(self) -> dict:
         return {
-            Attribute.HEATING_EQUIPMENT_STATUS: {2: 2, 4: 7}.get(self.mode, 0),
-            Attribute.COOLING_EQUIPMENT_STATUS: {3: 2, 5: 2}.get(self.mode, 0),
+            Attribute.HEATING_EQUIPMENT_STATUS: {
+                HvacMode.HEAT: HeatingEquipmentStatus.STAGE_1,
+                HvacMode.EMERGENCY_HEAT: HeatingEquipmentStatus.AUX_HEAT_1,
+            }.get(self.mode, HeatingEquipmentStatus.NOT_ACTIVE),
+            Attribute.COOLING_EQUIPMENT_STATUS: {
+                HvacMode.COOL: CoolingEquipmentStatus.STAGE_1,
+                HvacMode.AUTO: CoolingEquipmentStatus.STAGE_1,
+            }.get(self.mode, CoolingEquipmentStatus.NOT_ACTIVE),
             Attribute.PROGRESSIVE_RECOVERY: 0,
-            Attribute.FAN_STATUS: 1 if self.fan_mode in (1, 2) else 0,
+            Attribute.FAN_STATUS: FanStatus.ACTIVE
+            if self.fan_mode in (FanMode.ON, FanMode.AUTO)
+            else FanStatus.NOT_ACTIVE,
         }
 
     def _status_7_data(self) -> dict:
         return {
             Attribute.DEHUMIDIFICATION_STATUS: self.dehumidification_status,
             Attribute.HUMIDIFICATION_STATUS: self.humidification_status,
-            Attribute.VENTILATION_STATUS: 2 if self.fresh_air_mode else 0,
-            Attribute.AIR_CLEANING_STATUS: 2 if self.air_cleaning_mode else 0,
+            Attribute.VENTILATION_STATUS: VentilationStatus.ACTIVE
+            if self.fresh_air_mode
+            else VentilationStatus.NOT_ACTIVE,
+            Attribute.AIR_CLEANING_STATUS: AirCleaningStatus.ACTIVE
+            if self.air_cleaning_mode
+            else AirCleaningStatus.NOT_ACTIVE,
         }
 
     def _sensors_2_data(self) -> dict:
         return {
-            Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
+            Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: SensorStatus.NO_ERROR,
             Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
-            Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: 0,
+            Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: SensorStatus.NO_ERROR,
             Attribute.OUTDOOR_TEMPERATURE_CONTROLLING_SENSOR_VALUE: 25,
-            Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
+            Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: SensorStatus.NO_ERROR,
             Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
-            Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: 0,
+            Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: SensorStatus.NO_ERROR,
             Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 40,
         }
 
@@ -494,7 +538,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             try:
                 action = Action(action_byte)
             except ValueError:
-                self._send_nack(0x05, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ACTION, sequence)
                 index = next_index
                 continue
 
@@ -505,7 +549,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             try:
                 domain = FunctionalDomain(domain_byte)
             except ValueError:
-                self._send_nack(0x06, sequence)
+                self._send_nack(NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN, sequence)
                 index = next_index
                 continue
 
@@ -515,11 +559,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 and attribute == 8
             ):
                 # Reset (spec 1.8) is write-only and has no MAPPING schema.
-                self._send_nack(0x20, sequence)
+                self._send_nack(NackStatus.ATTRIBUTE_NOT_READABLE, sequence)
             elif action not in MAPPING or domain not in MAPPING[action]:
-                self._send_nack(0x06, sequence)
+                self._send_nack(NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN, sequence)
             elif attribute not in MAPPING[action][domain]:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
 
             index = next_index
 
@@ -574,14 +618,14 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     FunctionalDomain.CONTROL, 7, sequence, self._control_7_data()
                 )
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.SENSORS:
             if attribute == 2:
                 self._reply(
                     FunctionalDomain.SENSORS, 2, sequence, self._sensors_2_data()
                 )
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.SCHEDULING:
             if attribute == 4:
                 self._reply(
@@ -591,13 +635,13 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     {Attribute.HOLD: self.hold},
                 )
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.STATUS:
             if attribute == 1:
                 self._reply(FunctionalDomain.STATUS, 1, sequence, self._status_1_data())
             elif attribute == 2:
                 # Sync is write-only (spec 7.2).
-                self._send_nack(0x20, sequence)
+                self._send_nack(NackStatus.ATTRIBUTE_NOT_READABLE, sequence)
             elif attribute == 6:
                 self._reply(FunctionalDomain.STATUS, 6, sequence, self._status_6_data())
             elif attribute == 7:
@@ -607,7 +651,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     FunctionalDomain.STATUS, 8, sequence, {Attribute.ERROR: self.error}
                 )
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.IDENTIFICATION:
             if attribute == 1:
                 self._reply(
@@ -635,27 +679,27 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     {Attribute.LOCATION: self.location, Attribute.NAME: self.name},
                 )
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         else:
-            self._send_nack(0x06, sequence)
+            self._send_nack(NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN, sequence)
 
     def _write_control_1(self, packet: Packet) -> None:
         data = packet.data
 
         if Attribute.MODE in data:
             self.mode = data[Attribute.MODE]
-            self.hold = 0
+            self.hold = HoldType.DISABLED
 
         if Attribute.FAN_MODE in data:
             self.fan_mode = data[Attribute.FAN_MODE]
 
         if Attribute.HEAT_SETPOINT in data:
             self.heat_setpoint = data[Attribute.HEAT_SETPOINT]
-            self.hold = 1
+            self.hold = HoldType.TEMPORARY
 
         if Attribute.COOL_SETPOINT in data:
             self.cool_setpoint = data[Attribute.COOL_SETPOINT]
-            self.hold = 1
+            self.hold = HoldType.TEMPORARY
 
         self._queue_cos(
             Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
@@ -693,11 +737,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         value = packet.data.get(Attribute.DEHUMIDIFICATION_SETPOINT)
 
         if value is None or not (value == 0 or 40 <= value <= 90):
-            self._send_nack(0x10, packet.sequence)
+            self._send_nack(NackStatus.VALUE_OUT_OF_RANGE, packet.sequence)
             return
 
         self.dehumidification_setpoint = value
-        self.dehumidification_status = 2
+        self.dehumidification_status = DehumidificationStatus.WHOLE_HOME_ACTIVE
 
         self._queue_cos(
             Attribute.COS_DEHUMIDIFICATION_SETPOINT,
@@ -728,11 +772,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         value = packet.data.get(Attribute.HUMIDIFICATION_SETPOINT)
 
         if value is None or not (value == 0 or 1 <= value <= 7 or 10 <= value <= 50):
-            self._send_nack(0x10, packet.sequence)
+            self._send_nack(NackStatus.VALUE_OUT_OF_RANGE, packet.sequence)
             return
 
         self.humidification_setpoint = value
-        self.humidification_status = 2
+        self.humidification_status = HumidificationStatus.ACTIVE
 
         self._queue_cos(
             Attribute.COS_HUMIDIFICATION_SETPOINT,
@@ -838,7 +882,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         # spec 5.4: writes always send 0 for the status byte and it should
         # not overwrite the real status - but receiving a fresh value is
         # exactly what clears a Timed Out condition, so treat it as No Error.
-        self.outdoor_sensor_status = 0
+        self.outdoor_sensor_status = SensorStatus.NO_ERROR
         self.outdoor_sensor_value = packet.data.get(Attribute.OUTDOOR_SENSOR)
 
         self._queue_cos(
@@ -858,7 +902,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def _write_sync(self, packet: Packet) -> None:
         # spec 7.2: 0 and 2-255 are Reserved; only 1 starts a sync.
         if packet.data.get(Attribute.SYNCED) != 1:
-            self._send_nack(0x10, packet.sequence)
+            self._send_nack(NackStatus.VALUE_OUT_OF_RANGE, packet.sequence)
             return
 
         asyncio.ensure_future(self._send_sync_burst())
@@ -881,22 +925,22 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 self._write_air_cleaning(packet)
             elif attribute == 7:
                 # Thermostat/IAQ Available is read-only (spec K).
-                self._send_nack(0x11, sequence)
+                self._send_nack(NackStatus.ATTRIBUTE_READ_ONLY, sequence)
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.SCHEDULING:
             if attribute == 4:
                 self._write_hold(packet)
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.SENSORS:
             if attribute == 4:
                 self._write_outdoor_sensor(packet)
             elif attribute == 2:
                 # Controlling Sensor Values is read-only (spec K).
-                self._send_nack(0x11, sequence)
+                self._send_nack(NackStatus.ATTRIBUTE_READ_ONLY, sequence)
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.STATUS:
             if attribute == 1:
                 self._configure_cos(packet)
@@ -905,17 +949,17 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             elif attribute in (6, 7, 8):
                 # Thermostat Status / IAQ Status / Thermostat Error are all
                 # read-only (spec K).
-                self._send_nack(0x11, sequence)
+                self._send_nack(NackStatus.ATTRIBUTE_READ_ONLY, sequence)
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.IDENTIFICATION:
             if attribute in (1, 2):
                 # Revision & Model / MAC Address are read-only (spec K).
-                self._send_nack(0x11, sequence)
+                self._send_nack(NackStatus.ATTRIBUTE_READ_ONLY, sequence)
             else:
-                self._send_nack(0x07, sequence)
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         else:
-            self._send_nack(0x06, sequence)
+            self._send_nack(NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN, sequence)
 
     def data_received(self, data: bytes) -> None:
         _LOGGER.info("Received data: %s", data.hex(" ", 1))
@@ -945,7 +989,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 self._handle_write(packet)
             elif packet.action == Action.NACK:
                 _LOGGER.warning(
-                    "Received NACK from client, status code %d", packet.status_code
+                    "Received NACK from client, status code %s",
+                    _describe_nack_status(packet.status_code),
                 )
             else:
                 _LOGGER.warning(
