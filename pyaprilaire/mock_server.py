@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from datetime import datetime, timedelta
 
 from .const import (
     QUEUE_FREQUENCY,
@@ -22,6 +23,7 @@ from .const import (
     HvacMode,
     NackStatus,
     SensorStatus,
+    TemperatureScale,
     ThermostatError,
     VentilationStatus,
 )
@@ -32,6 +34,12 @@ from .packet import MAPPING, NackPacket, Packet
 # out of step with what the parser produces. Byte 21 is Reserved and appears
 # here as None: it has no attribute name, is never subscribable, and only
 # occupies its structurally-required place in the message.
+# How long a temporary hold (spec 3.4) created by a setpoint write lasts.
+# Real hardware ends one at the next scheduled transition; the mock has no
+# schedule, so it picks a fixed duration and reports the resulting end time
+# rather than leaving the hold end fields at a meaningless zero.
+TEMPORARY_HOLD_HOURS = 2
+
 COS_SUBSCRIPTION_ATTRIBUTES = [
     attribute_info[0]
     for attribute_info in MAPPING[Action.READ_RESPONSE][FunctionalDomain.STATUS][1]
@@ -92,6 +100,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.cool_setpoint = 25
         self.heat_setpoint = 20
         self.hold = HoldType.DISABLED
+
+        # When the current temporary hold ends; None whenever no hold is
+        # active. See _start_temporary_hold / _scheduling_4_data.
+        self.hold_end: datetime | None = None
 
         self.dehumidification_status = DehumidificationStatus.NOT_ACTIVE
         self.dehumidification_setpoint = 60
@@ -191,6 +203,80 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     # -- Shared attribute payloads, kept in one place so every code path
     # (reads, COS, sync burst) reports the same state. --
 
+    def _setup_1_data(self) -> dict:
+        """Thermostat Installer Settings (spec 1.1).
+
+        Only the fields packet.py maps are reported; the rest of the
+        message is the structural padding Packet.serialize emits for an
+        unmapped byte. Control Setup and Program Format are mapped but
+        deliberately absent: this mock models neither, and inventing a value
+        for them would be the kind of self-contradictory state the rest of
+        these helpers exist to avoid.
+        """
+        return {
+            # The setpoints below are Celsius - the protocol's temperature
+            # encoding tops out at 63, which a Fahrenheit setpoint would
+            # exceed - so reporting Fahrenheit here would contradict every
+            # temperature this mock sends.
+            Attribute.TEMPERATURE_SCALE: TemperatureScale.CELSIUS,
+            # The mock's default mode is Auto, which needs auto changeover
+            # enabled and a deadband between the two setpoints.
+            Attribute.AUTO_CHANGEOVER: 1,
+            Attribute.DEADBAND: 2,
+            # No remote, outdoor or return air sensor: the outdoor
+            # temperature this mock serves is the *written* value of spec
+            # 5.4, which is what an automation system supplies precisely
+            # when no outdoor sensor is installed.
+            Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED: 0,
+            Attribute.OUTDOOR_SENSOR_INSTALLED: 0,
+            Attribute.RETURN_AIR_SENSOR_INSTALLED: 0,
+            # Heat blast and progressive recovery aren't modeled, and
+            # STATUS 0x06 accordingly always reports progressive recovery
+            # as inactive.
+            Attribute.HEAT_BLAST_AVAILABLE: 0,
+            Attribute.PROGRESSIVE_RECOVERY_AVAILABLE: 0,
+            Attribute.AWAY_AVAILABLE: 1,
+        }
+
+    def _scheduling_4_data(self) -> dict:
+        """Schedule Hold (spec 3.4).
+
+        The held fan mode and setpoints are the ones the hold is holding -
+        i.e. the mock's current state - so they can't contradict what
+        CONTROL 0x01 and CONTROL 0x03 report. With no hold active there is
+        nothing being held: every field but the hold type is sent as NULL
+        (spec section G).
+        """
+        if self.hold == HoldType.DISABLED:
+            return {Attribute.HOLD: self.hold}
+
+        data = {
+            Attribute.HOLD: self.hold,
+            Attribute.HOLD_FAN_MODE: self.fan_mode,
+            Attribute.HOLD_HEAT_SETPOINT: self.heat_setpoint,
+            Attribute.HOLD_COOL_SETPOINT: self.cool_setpoint,
+            Attribute.HOLD_DEHUMIDIFICATION_SETPOINT: self.dehumidification_setpoint,
+        }
+
+        if self.hold_end is not None:
+            data.update(
+                {
+                    Attribute.HOLD_END_MINUTE: self.hold_end.minute,
+                    Attribute.HOLD_END_HOUR: self.hold_end.hour,
+                    Attribute.HOLD_END_DATE: self.hold_end.day,
+                    Attribute.HOLD_END_MONTH: self.hold_end.month,
+                    # spec 3.4: the year field carries the offset from 2000.
+                    Attribute.HOLD_END_YEAR: self.hold_end.year - 2000,
+                }
+            )
+
+        return data
+
+    def _start_temporary_hold(self) -> None:
+        """Begin a temporary hold (spec 3.4), as a setpoint write does."""
+        self.hold = HoldType.TEMPORARY
+        self.hold_end = datetime.now() + timedelta(hours=TEMPORARY_HOLD_HOURS)
+
     def _control_1_data(self) -> dict:
         return {
             Attribute.MODE: self.mode,
@@ -273,7 +359,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SETUP,
                 1,
                 sequence=self._get_sequence(),
-                data={Attribute.AWAY_AVAILABLE: 1},
+                data=self._setup_1_data(),
             ),
         )
         self._queue_cos(
@@ -351,7 +437,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SCHEDULING,
                 4,
                 sequence=self._get_sequence(),
-                data={Attribute.HOLD: self.hold},
+                data=self._scheduling_4_data(),
             ),
         )
         self._queue_cos(
@@ -572,7 +658,12 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         attribute = packet.attribute
         sequence = packet.sequence
 
-        if domain == FunctionalDomain.CONTROL:
+        if domain == FunctionalDomain.SETUP:
+            if attribute == 1:
+                self._reply(FunctionalDomain.SETUP, 1, sequence, self._setup_1_data())
+            else:
+                self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
+        elif domain == FunctionalDomain.CONTROL:
             if attribute == 1:
                 self._reply(
                     FunctionalDomain.CONTROL, 1, sequence, self._control_1_data()
@@ -632,7 +723,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     FunctionalDomain.SCHEDULING,
                     4,
                     sequence,
-                    {Attribute.HOLD: self.hold},
+                    self._scheduling_4_data(),
                 )
             else:
                 self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
@@ -689,17 +780,22 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         if Attribute.MODE in data:
             self.mode = data[Attribute.MODE]
             self.hold = HoldType.DISABLED
+            self.hold_end = None
+
+        # When the current temporary hold ends; None whenever no hold is
+        # active. See _start_temporary_hold / _scheduling_4_data.
+        self.hold_end: datetime | None = None
 
         if Attribute.FAN_MODE in data:
             self.fan_mode = data[Attribute.FAN_MODE]
 
         if Attribute.HEAT_SETPOINT in data:
             self.heat_setpoint = data[Attribute.HEAT_SETPOINT]
-            self.hold = HoldType.TEMPORARY
+            self._start_temporary_hold()
 
         if Attribute.COOL_SETPOINT in data:
             self.cool_setpoint = data[Attribute.COOL_SETPOINT]
-            self.hold = HoldType.TEMPORARY
+            self._start_temporary_hold()
 
         self._queue_cos(
             Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
@@ -728,7 +824,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SCHEDULING,
                 4,
                 sequence=self._get_sequence(),
-                data={Attribute.HOLD: self.hold},
+                data=self._scheduling_4_data(),
             ),
         )
 
@@ -867,6 +963,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         if Attribute.HOLD in packet.data:
             self.hold = packet.data[Attribute.HOLD]
 
+            if self.hold == HoldType.DISABLED:
+                self.hold_end = None
+            elif self.hold == HoldType.TEMPORARY and self.hold_end is None:
+                self.hold_end = datetime.now() + timedelta(hours=TEMPORARY_HOLD_HOURS)
+
         self._queue_cos(
             Attribute.COS_SCHEDULE_HOLD,
             Packet(
@@ -874,7 +975,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SCHEDULING,
                 4,
                 sequence=self._get_sequence(),
-                data={Attribute.HOLD: self.hold},
+                data=self._scheduling_4_data(),
             ),
         )
 
@@ -912,7 +1013,13 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         attribute = packet.attribute
         sequence = packet.sequence
 
-        if domain == FunctionalDomain.CONTROL:
+        if domain == FunctionalDomain.SETUP:
+            # Installer settings are spec-legal writes, but nothing in
+            # client.py writes them and this mock doesn't model changing
+            # them, so they're refused the same way as any other attribute
+            # it can't act on.
+            self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
+        elif domain == FunctionalDomain.CONTROL:
             if attribute == 1:
                 self._write_control_1(packet)
             elif attribute == 3:
