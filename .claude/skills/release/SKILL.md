@@ -92,22 +92,46 @@ once resolved (or immediately if it merged clean):
 git push origin release/X.Y.Z
 ```
 
-### Step B — open the PR to main (first rc only)
+### Step B — build this release's changelog so far
 
-Skip this if a PR from `release/X.Y.Z` to `main` already exists — check with
-`gh pr list --head release/X.Y.Z --base main`. Later rc's just add commits to it;
-GitHub updates the PR automatically, nothing to do here.
+Before touching the PR, build the **cumulative changelog**: what the final release
+notes would look like if you shipped everything merged so far, i.e. scoped from the
+last real, published release up to the release branch's current tip. Follow "Release
+notes format" below with `previous_tag_name` set to the last final release tag
+(`gh release list --exclude-drafts --exclude-pre-releases --limit 1`; omit it if
+there is no previous release) and `target_commitish` set to `release/X.Y.Z`. Save it
+somewhere you can reuse it in the next two steps (e.g. `/tmp/release-notes.md`) —
+you need this exact content twice: once for the PR body, and again for rc0's release
+body (they're the same scope at rc0, since nothing has diverged yet).
+
+### Step C — open or update the PR to main
+
+The PR body should always read like the changelog for the release as it stands
+right now, not a static placeholder — that's what makes it useful as a running
+preview of what will ship. Use the changelog from Step B as the body every time:
+
+First rc — check a PR doesn't already exist (`gh pr list --head release/X.Y.Z
+--base main`), then create one:
 
 ```bash
 gh pr create --base main --head release/X.Y.Z \
   --title "release: X.Y.Z" \
-  --body "Release candidate for X.Y.Z. Do not merge until the release is ready to ship — see the draft GitHub releases for rc-by-rc changelogs."
+  --body-file /tmp/release-notes.md
 ```
 
 Fill in the repo's PR template (`.github/pull_request_template.md`) if `gh pr
-create` doesn't apply it automatically.
+create` doesn't apply it automatically — put the changelog in the template's summary
+section rather than discarding the template.
 
-### Step C — bump the version on the release branch
+Later rc's — the PR already exists, but its body is now stale (it only reflects
+what had merged as of the previous rc). Refresh it with the changelog you just
+rebuilt in Step B, so it reflects everything merged up to *this* rc:
+
+```bash
+gh pr edit release/X.Y.Z --body-file /tmp/release-notes.md
+```
+
+### Step D — bump the version on the release branch
 
 New release (rc0):
 
@@ -129,21 +153,18 @@ git push origin release/X.Y.Z
 git push origin X.Y.Zrc<N>
 ```
 
-### Step D — draft the GitHub release with the changelog
+### Step E — draft the GitHub release with the changelog
 
-The changelog scope differs by rc, because rc's should show only what's *new since
-the last rc*, not the whole release again:
+Unlike the PR body, each rc's *own* release notes should show only what's new
+*since the last rc*, not the whole release again — the PR is the cumulative view,
+the rc releases are the per-rc deltas:
 
-- **rc0**: notes should cover everything since the last real, published release.
-  Find the previous final tag with
-  `gh release list --exclude-drafts --exclude-pre-releases --limit 1`. If there
-  isn't one (first-ever release), omit `previous_tag_name` and let notes cover the
-  full history.
-- **rc1 and later**: notes should start from the *previous rc tag of this same
-  release* (e.g. rc2's notes start at rc1), so only newly merged PRs show up.
-
-Build the notes body using the process in "Release notes format" below, then create
-the release with the composed file instead of `--generate-notes`:
+- **rc0**: identical scope to the cumulative changelog you already built in Step B
+  (there's no previous rc to delta against) — reuse that file as-is.
+- **rc1 and later**: rebuild the changelog from "Release notes format" with
+  `previous_tag_name` set to the *previous rc tag of this same release* instead
+  (e.g. rc2's notes start at rc1), so only newly merged PRs show up. Don't reuse
+  the Step B file here — it's cumulative-scoped, this one needs to be delta-scoped.
 
 ```bash
 gh release create X.Y.Zrc<N> \
@@ -178,19 +199,35 @@ by hand — it already produces exactly this format — and only write part 1 yo
 
 ```bash
 gh api repos/chamberlain2007/pyaprilaire/releases/generate-notes \
-  -f tag_name=<tag> \
+  -f tag_name=<tag-or-branch> \
   -f target_commitish=<branch> \
   -f previous_tag_name=<previous-tag> \
   --jq .body
 ```
 
-(omit `-f previous_tag_name=...` entirely if there is no previous tag). This
-returns a `## What's Changed` section with one `* <title> by @<author> in #<number>`
-line per merged PR, followed by a `**Full Changelog**: <compare-url>` line that
-GitHub renders as `Full Changelog: <old-tag>...<new-tag>`. Read those PR titles,
-write your narrative paragraph, then assemble the final file with all three parts,
-keeping the generated section (list + compare link) intact rather than
-reconstructing it:
+`previous_tag_name` is what sets the scope — it's the "since when" for both the PR
+list and the compare link — so pick it deliberately each time you build notes
+rather than defaulting it:
+
+- Building the **cumulative changelog** (Phase 1 Step B, and Phase 2 Step C): use
+  the last real, published release tag.
+- Building a **per-rc delta** (Phase 1 Step E for rc1+): use the previous rc tag of
+  this same release.
+
+(omit `-f previous_tag_name=...` entirely in either case if there's nothing to
+diff against — the very first release, or the very first rc). `tag_name` mostly
+just controls the label in the compare link; when you're building the PR's
+changelog before the rc tag exists yet (Phase 1 Step B), pass the branch name
+(`release/X.Y.Z`) instead of a not-yet-created tag — it's a valid ref, so the
+compare link resolves, and you don't need to predict the next rc number to build
+it.
+
+This returns a `## What's Changed` section with one `* <title> by @<author> in
+#<number>` line per merged PR, followed by a `**Full Changelog**: <compare-url>`
+line that GitHub renders as `Full Changelog: <old-tag>...<new-tag>`. Read those PR
+titles, write your narrative paragraph, then assemble the final file with all
+three parts, keeping the generated section (list + compare link) intact rather
+than reconstructing it:
 
 ```
 <your narrative paragraph>
@@ -201,9 +238,11 @@ reconstructing it:
 **Full Changelog**: <the compare link from generate-notes, unchanged>
 ```
 
-Save that to `/tmp/release-notes.md` and pass it via `--notes-file` when creating
-the release (both here and in Phase 2). Don't hand-roll the bullet list or the
-compare link yourself — reusing GitHub's generated ones keeps author handles, PR
+Save that to a file and pass it via `--notes-file` (or `--body-file` for the PR)
+when you use it. You'll rebuild this multiple times across one rc cut with
+different scopes — don't reuse a stale file across steps that need different
+scopes (see Phase 1 Steps B and E). Don't hand-roll the bullet list or the compare
+link yourself either — reusing GitHub's generated ones keeps author handles, PR
 numbers, and link formatting exactly right.
 
 ## Phase 2: Run release
