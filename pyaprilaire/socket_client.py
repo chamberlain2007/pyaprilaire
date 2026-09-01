@@ -93,7 +93,6 @@ class SocketClient:
 
         self.state_changed()
 
-        # Ensure already disconnected
         self._disconnect()
 
         if connect_wait_period is not None and connect_wait_period > 0:
@@ -129,7 +128,6 @@ class SocketClient:
 
         self.state_changed()
 
-        # Ensure already disconnected
         self._disconnect()
 
         self.protocol = self.create_protocol()
@@ -145,12 +143,8 @@ class SocketClient:
     def _connection_established(self):
         """Record a newly established connection.
 
-        The "connection made" line is deliberately skipped for the periodic
-        reconnect `_auto_reconnect_loop` performs (see `auto_reconnecting`,
-        still set at this point and cleared just below): that one happens on
-        a timer rather than because anything changed, so logging it would
-        put an hourly connect/disconnect pair in the log for a connection
-        that was never actually down as far as a consumer is concerned.
+        The "connection made" line is skipped for the periodic reconnect of
+        `_auto_reconnect_loop`, which does not mean the connection was down.
         """
         if not self.auto_reconnecting:
             _LOGGER.info("Aprilaire connection made")

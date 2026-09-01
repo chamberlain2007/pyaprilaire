@@ -40,9 +40,8 @@ ch.setLevel(logging.DEBUG)
 
 ch.setFormatter(CustomFormatter())
 
-# The library logs through the standard `pyaprilaire.*` loggers rather than
-# one handed to it, so this utility gets the client's own output by
-# configuring the package logger - and its own messages by logging under it.
+# The library logs through the standard `pyaprilaire.*` loggers, so configuring
+# the package logger is what captures the client's output here.
 _PACKAGE_LOGGER = logging.getLogger(__package__)
 _PACKAGE_LOGGER.setLevel(logging.DEBUG)
 _PACKAGE_LOGGER.addHandler(ch)

@@ -43,7 +43,7 @@ class FunctionalDomain(IntEnum):
     NACK = 16
 
 
-# Known model numbers per Aprilaire. Additional models may be discovered.
+# Known model numbers per Aprilaire; additional models may be discovered.
 MODELS = {
     0: "8476W",
     1: "8810",
@@ -151,12 +151,8 @@ class Attribute(StrEnum):
     OUTDOOR_SENSOR_STATUS = "outdoor_sensor_status"
     OUTDOOR_SENSOR = "outdoor_sensor"
 
-    # Whether this thermostat implements the Sensors attributes this library
-    # reads on top of the controlling sensors (spec 5.2). Not protocol
-    # fields: they are reported by AprilaireClient once the device has
-    # answered - or terminally NACKed - a read of the attribute in question,
-    # so a consumer can tell "this model has no RAT/LAT sensors" apart from
-    # "the value hasn't arrived yet" and hide the corresponding entities.
+    # Not protocol fields: AprilaireClient reports these once the device has
+    # answered - or terminally NACKed - a read of the attribute in question.
     SENSOR_VALUES_AVAILABLE = "sensor_values_available"  # spec 5.1
     WRITTEN_OUTDOOR_TEMPERATURE_AVAILABLE = (
         "written_outdoor_temperature_available"  # spec 5.4
@@ -465,11 +461,8 @@ def get_simple_status(
 class NackStatus(IntEnum):
     """Status codes carried by a NACK action, per spec section H.5.
 
-    Spec section G documents the byte at this position in the frame as the
-    FUNCTIONAL DOMAIN / STATUS CODE field: for every other action it is a
-    functional domain, but for a NACK action it is always one of these
-    status codes instead (`NackPacket.status_code` in packet.py is the
-    raw, undecoded value of this byte).
+    These occupy the FUNCTIONAL DOMAIN / STATUS CODE byte of spec section G,
+    which holds a functional domain for every other action.
     """
 
     RESERVED_00 = 0x00
