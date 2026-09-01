@@ -32,9 +32,7 @@ def protocol(event_loop, logger):
     data_received_callback = AsyncMock()
     reconnect_action = AsyncMock()
 
-    return _AprilaireClientProtocol(
-        data_received_callback, reconnect_action, None, logger
-    )
+    return _AprilaireClientProtocol(data_received_callback, logger, reconnect_action)
 
 
 @pytest.fixture
@@ -61,8 +59,8 @@ def test_protocol_connection_made(protocol: _AprilaireClientProtocol):
 def test_protocol_connection_made_without_connected_action(
     protocol: _AprilaireClientProtocol,
 ):
-    # The `protocol` fixture passes `None` for connected_action, so
-    # connecting must still start the queue loop rather than raising.
+    # The `protocol` fixture omits connected_action, so connecting must
+    # still start the queue loop rather than raising.
     protocol._queue_loop = AsyncMock()
 
     assert protocol.connected_action is None
@@ -347,6 +345,19 @@ def test_protocol_mode_re_read(protocol: _AprilaireClientProtocol):
     protocol.data_received(bytes([1, 1, 0, 7, 5, 2, 1, 1, 2, 10, 20, 127]))
 
     assert protocol.read_control.call_count == 1
+
+
+def test_protocol_connection_lost_without_reconnect_action(logger):
+    # reconnect_action is optional in the same way connected_action is -
+    # losing the connection without one must still notify the callback
+    # rather than raising.
+    protocol = _AprilaireClientProtocol(AsyncMock(), logger)
+
+    assert protocol.reconnect_action is None
+
+    protocol.connection_lost(None)
+
+    assert protocol.data_received_callback.call_count == 1
 
 
 def test_protocol_connection_lost(protocol: _AprilaireClientProtocol):
