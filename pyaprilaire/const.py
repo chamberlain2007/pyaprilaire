@@ -151,6 +151,17 @@ class Attribute(StrEnum):
     OUTDOOR_SENSOR_STATUS = "outdoor_sensor_status"
     OUTDOOR_SENSOR = "outdoor_sensor"
 
+    # Whether this thermostat implements the Sensors attributes this library
+    # reads on top of the controlling sensors (spec 5.2). Not protocol
+    # fields: they are reported by AprilaireClient once the device has
+    # answered - or terminally NACKed - a read of the attribute in question,
+    # so a consumer can tell "this model has no RAT/LAT sensors" apart from
+    # "the value hasn't arrived yet" and hide the corresponding entities.
+    SENSOR_VALUES_AVAILABLE = "sensor_values_available"  # spec 5.1
+    WRITTEN_OUTDOOR_TEMPERATURE_AVAILABLE = (
+        "written_outdoor_temperature_available"  # spec 5.4
+    )
+
     # Schedule Hold (spec 3.4)
     HOLD_FAN_MODE = "hold_fan_mode"
     HOLD_HEAT_SETPOINT = "hold_heat_setpoint"

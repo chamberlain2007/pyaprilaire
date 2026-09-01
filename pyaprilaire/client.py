@@ -39,6 +39,40 @@ MAX_NACK_RETRIES = 2
 # Spec section H.5: "0.5 to 1 second delay between retries".
 NACK_RETRY_DELAY_RANGE = (0.5, 1.0)
 
+# The NACK status codes that mean a request will *never* succeed against this
+# particular device, as opposed to having failed this once. Only these three
+# say something about the device rather than about the request:
+#
+#   UNKNOWN_FUNCTIONAL_DOMAIN / UNKNOWN_ATTRIBUTE - the device's firmware has
+#     no such domain/attribute at all.
+#   UNSUPPORTED_MODEL - spec section H.5's own code for an attribute this
+#     model doesn't implement, even though the protocol defines it. This is
+#     what a thermostat without RAT/LAT sensors or written outdoor
+#     temperature support answers with.
+#
+# `AprilaireClient` remembers these (see its `unsupported_attributes`) and
+# stops re-requesting the attribute. Everything else is deliberately left
+# out, because caching it would disable a working attribute:
+#
+#   ATTRIBUTE_NOT_AVAILABLE_TRY_LATER - explicitly temporary.
+#   ATTRIBUTE_READ_ONLY / ATTRIBUTE_NOT_READABLE /
+#     ATTRIBUTE_NOT_WRITEABLE_IN_CURRENT_CONFIGURATION - direction- or
+#     configuration-specific. Reads and writes of one attribute share a
+#     cache key, so a write refused as read-only must not be taken to mean
+#     the attribute can't be read either.
+#   VALUE_OUT_OF_RANGE / INCORRECT_WRITE_DATA_LENGTH /
+#     INCORRECT_READ_DATA_LENGTH - a complaint about this one request's
+#     contents; the same attribute with different data may well be fine.
+#   The RETRYABLE_NACK_STATUSES above - transient by definition, and already
+#     retried before any NackError surfaces.
+UNSUPPORTED_NACK_STATUSES = frozenset(
+    {
+        NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN,
+        NackStatus.UNKNOWN_ATTRIBUTE,
+        NackStatus.UNSUPPORTED_MODEL,
+    }
+)
+
 
 class NackError(Exception):
     """Raised to fail a `wait_for_response` future for a terminally-NACKed
@@ -60,6 +94,30 @@ class NackError(Exception):
         super().__init__(
             f"Request was NACKed with status {status_description} (0x{raw_status:02X})"
         )
+
+
+class UnsupportedAttributeError(NackError):
+    """Raised for a request this device has already permanently refused.
+
+    Once a terminal NACK with one of `UNSUPPORTED_NACK_STATUSES` has proved
+    the thermostat doesn't implement an attribute, re-requesting it can only
+    produce the same NACK again - once per connection, forever, since
+    `_update_status` runs on every hourly reconnect. `AprilaireClient`
+    remembers those attributes and raises this instead of putting the
+    request on the wire.
+
+    The NACK that proves the point raises this as well, rather than a plain
+    `NackError`: the attribute is just as unsupported on the call that
+    discovers it as on every call after, so catching this type must not
+    depend on whether the answer came from the device or from the cache.
+
+    It subclasses `NackError`, carrying the status of the NACK behind it,
+    because it *is* that same failure. A caller handling `NackError`
+    therefore needs no changes. Note this is raised rather than signalled by
+    returning `None`: `None` already means "timed out" (see
+    `wait_for_response`), which is the opposite situation - a timed-out
+    request may still succeed on a retry, an unsupported one never will.
+    """
 
 
 # How long to wait for a COS Subscriptions read response (spec 7.1) before
@@ -179,6 +237,18 @@ COS_SUBSCRIPTIONS = [
 # or overridden.
 DEFAULT_COS_SUBSCRIPTIONS: dict[Attribute, int] = {
     attribute: value for attribute, value in COS_SUBSCRIPTIONS if attribute is not None
+}
+
+# Attributes whose support varies by thermostat model, paired with the
+# attribute `AprilaireClient` reports their availability under. Not every
+# model has RAT/LAT sensors (spec 5.1) or accepts a written outdoor
+# temperature (spec 5.4); one that doesn't answers a read with a NACK rather
+# than with data, so a consumer left waiting on the values alone can't tell
+# an unsupported model from one that simply hasn't replied yet. See
+# `AprilaireClient._set_availability`.
+AVAILABILITY_ATTRIBUTES: dict[tuple[FunctionalDomain, int], Attribute] = {
+    (FunctionalDomain.SENSORS, 1): Attribute.SENSOR_VALUES_AVAILABLE,
+    (FunctionalDomain.SENSORS, 4): Attribute.WRITTEN_OUTDOOR_TEMPERATURE_AVAILABLE,
 }
 
 
@@ -514,9 +584,21 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             asyncio.ensure_future(self.reconnect_action())
 
     async def read_sensors(self):
-        """Send a request for updated sensor data"""
+        """Send a request for the controlling sensor values (spec 5.2)"""
         return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+        )
+
+    async def read_sensor_values(self):
+        """Send a request for the full sensor values array (spec 5.1)"""
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+        )
+
+    async def read_written_outdoor_temperature(self):
+        """Send a request for the written outdoor temperature value (spec 5.4)"""
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
         )
 
     async def read_control(self):
@@ -710,8 +792,19 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 4)
         )
 
-    async def set_written_outdoor_temperature_value(self, value: int):
-        """Send a request to update the written outdoor temperature value"""
+    async def set_written_outdoor_temperature_value(self, value: float):
+        """Send a request to update the written outdoor temperature value
+        (spec 5.4).
+
+        `value` is degrees Celsius and may carry a half degree; it is passed
+        through untouched, because `Packet._encode_temperature` is the single
+        place that knows temperatures are quantized to half degrees. Rounding
+        here as well would make this setter disagree with every other
+        temperature write in the library about what, say, 21.3 means.
+
+        Spec 5.4 requires the status byte of a write to be 0; the thermostat
+        keeps reporting the real status on reads.
+        """
         await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -777,6 +870,27 @@ class AprilaireClient(SocketClient):
             tuple[FunctionalDomain, int], list[tuple[asyncio.Future, int | None]]
         ] = {}
 
+        # Attributes this thermostat has proved it doesn't implement, mapped
+        # to the terminal NACK that proved it (see
+        # `UNSUPPORTED_NACK_STATUSES`). Requesting one of these again can
+        # only earn the same NACK, so the gated methods raise
+        # `UnsupportedAttributeError` - built from the recorded NACK's own
+        # status - instead of sending.
+        #
+        # This lives on the client rather than on the protocol because
+        # `SocketClient._reconnect` builds a *new* protocol object for every
+        # connection: a protocol-held cache would be discarded on each
+        # hourly reconnect, which is precisely the repeated probing this
+        # exists to stop. Which attributes a device supports is a property
+        # of the device, so it outlives any one connection.
+        self.unsupported_attributes: dict[tuple[FunctionalDomain, int], NackError] = {}
+
+        # The last availability value reported through
+        # `data_received_callback` for each key of `AVAILABILITY_ATTRIBUTES`,
+        # so availability is pushed on a change rather than on every
+        # response and COS for a supported attribute.
+        self._reported_availability: dict[tuple[FunctionalDomain, int], bool] = {}
+
     async def _reconnect_with_delay(self):
         await super()._reconnect(self.retry_connection_interval)
 
@@ -814,6 +928,17 @@ class AprilaireClient(SocketClient):
         await self.read_control()
         await self.read_thermostat_iaq_available()  # spec Appendix J.4
         await self.read_sensors()
+
+        # Both are model-dependent (see `AVAILABILITY_ATTRIBUTES`), so they
+        # are asked for only until the thermostat says it doesn't have them.
+        # Checking rather than catching keeps an unsupported model from
+        # aborting the rest of this bootstrap.
+        if self.is_attribute_supported(FunctionalDomain.SENSORS, 1):
+            await self.read_sensor_values()
+
+        if self.is_attribute_supported(FunctionalDomain.SENSORS, 4):
+            await self.read_written_outdoor_temperature()
+
         await self.read_thermostat_name()
         await self.read_scheduling()  # spec Appendix J.11
         await self.configure_cos()
@@ -837,7 +962,22 @@ class AprilaireClient(SocketClient):
         # reported as response data to the user-supplied callback.
         is_nack_error = isinstance(data, NackError)
 
-        if not is_nack_error:
+        if is_nack_error:
+            # A NACK that proves the attribute unsupported fails this
+            # request as `UnsupportedAttributeError` too, not just every
+            # later one - otherwise the single call that discovers the
+            # attribute is missing raises a different type from all the
+            # calls after it, and a caller catching the subclass silently
+            # misses the discovery.
+            data = self._record_unsupported_attribute(
+                functional_domain, attribute, data
+            )
+        else:
+            # Anything at all coming back for one of these attributes - a
+            # read response or an unsolicited COS - proves the thermostat
+            # implements it.
+            self._set_availability(functional_domain, attribute, True)
+
             self.data_received_callback(data)
 
         # `FunctionalDomain.NONE` and attribute 0 are both real, meaningful
@@ -881,6 +1021,114 @@ class AprilaireClient(SocketClient):
 
         if unresolved_entries:
             self.futures[future_key] = unresolved_entries
+
+    def _record_unsupported_attribute(
+        self,
+        functional_domain: FunctionalDomain,
+        attribute: int,
+        nack_error: NackError,
+    ) -> NackError:
+        """Remember an attribute a terminal NACK proved this device doesn't
+        implement, so it is never requested again.
+
+        Only the statuses in `UNSUPPORTED_NACK_STATUSES` say anything about
+        the device; every other NACK is about this one request and leaves
+        the attribute's support unknown, so it is logged by the protocol and
+        otherwise ignored here.
+
+        Returns the error that should fail this request's pending
+        `wait_for_response`: `nack_error` unchanged, or an
+        `UnsupportedAttributeError` carrying the same status when this NACK
+        is the one that proved the attribute unsupported - so that the
+        discovering call and every cached refusal after it raise the same
+        type.
+        """
+        if nack_error.status not in UNSUPPORTED_NACK_STATUSES:
+            return nack_error
+
+        key = (functional_domain, attribute)
+
+        if key not in self.unsupported_attributes:
+            self.logger.warning(
+                "Thermostat does not support %s, %d (%s); it will not be "
+                "requested again",
+                int(functional_domain),
+                attribute,
+                nack_error.status.name,
+            )
+
+        unsupported_error = UnsupportedAttributeError(
+            nack_error.status, nack_error.raw_status
+        )
+
+        self.unsupported_attributes[key] = unsupported_error
+
+        self._set_availability(functional_domain, attribute, False)
+
+        return unsupported_error
+
+    def _set_availability(
+        self,
+        functional_domain: FunctionalDomain,
+        attribute: int,
+        available: bool,
+    ) -> None:
+        """Report whether a model-dependent attribute is available, if that
+        has changed since it was last reported.
+
+        Only the attributes named in `AVAILABILITY_ATTRIBUTES` are reported;
+        for anything else this is a no-op. Nothing is reported until the
+        thermostat has answered one way or the other, so a consumer that
+        merges these dicts simply has no key yet while support is unknown -
+        distinct from a definite `False`.
+        """
+        availability_attribute = AVAILABILITY_ATTRIBUTES.get(
+            (functional_domain, attribute)
+        )
+
+        if availability_attribute is None:
+            return
+
+        key = (functional_domain, attribute)
+
+        if self._reported_availability.get(key) == available:
+            return
+
+        self._reported_availability[key] = available
+
+        self.data_received_callback({availability_attribute: available})
+
+    def is_attribute_supported(
+        self, functional_domain: FunctionalDomain, attribute: int
+    ) -> bool:
+        """Whether this thermostat may still be sent requests for an
+        attribute.
+
+        `False` only once a terminal NACK has proved it isn't implemented
+        (see `unsupported_attributes`); an attribute that has never been
+        requested is optimistically `True`, since the only way to find out
+        is to ask. Callers that would rather handle the failure than check
+        first can just call the request method and catch
+        `UnsupportedAttributeError`.
+        """
+        return (functional_domain, attribute) not in self.unsupported_attributes
+
+    def _raise_if_unsupported(
+        self, functional_domain: FunctionalDomain, attribute: int
+    ) -> None:
+        """Raise rather than send a request this device has already refused.
+
+        The raised `UnsupportedAttributeError` carries the status of the
+        NACK that originally proved the attribute unsupported, so a caller
+        sees the same failure it would have seen from the device - just
+        without the round trip.
+        """
+        nack_error = self.unsupported_attributes.get((functional_domain, attribute))
+
+        if nack_error is None:
+            return
+
+        raise UnsupportedAttributeError(nack_error.status, nack_error.raw_status)
 
     def state_changed(self):
         """Send data indicating the state as changed"""
@@ -999,14 +1247,64 @@ class AprilaireClient(SocketClient):
                     self.futures.pop(future_key, None)
 
     async def read_sensors(self):
-        """Send a request for updated sensor data"""
+        """Send a request for the controlling sensor values (spec 5.2)"""
         return await self.protocol.read_sensors()
 
     async def read_sensors_and_wait(self, timeout: int = None):
-        """Send a request for updated sensor data and wait for the response"""
+        """Send a request for the controlling sensor values (spec 5.2) and
+        wait for the response"""
         sequence = await self.read_sensors()
         return await self.wait_for_response(
             FunctionalDomain.SENSORS, 2, timeout, sequence=sequence
+        )
+
+    async def read_sensor_values(self):
+        """Send a request for the full sensor values array (spec 5.1).
+
+        This is the only source for the sensors that aren't part of the
+        controlling set - notably RAT and LAT - as well as the per-sensor
+        status bytes saying which of them are installed at all.
+
+        Spec 5.1 is not COS-capable, so the thermostat never volunteers an
+        update: whatever cadence a consumer wants, it gets by calling this
+        again. This library only reads it on connect.
+
+        Raises `UnsupportedAttributeError` on a model that has already
+        refused it; see `is_attribute_supported`.
+        """
+        self._raise_if_unsupported(FunctionalDomain.SENSORS, 1)
+
+        return await self.protocol.read_sensor_values()
+
+    async def read_sensor_values_and_wait(self, timeout: int = None):
+        """Send a request for the full sensor values array (spec 5.1) and
+        wait for the response"""
+        sequence = await self.read_sensor_values()
+        return await self.wait_for_response(
+            FunctionalDomain.SENSORS, 1, timeout, sequence=sequence
+        )
+
+    async def read_written_outdoor_temperature(self):
+        """Send a request for the written outdoor temperature value (spec 5.4).
+
+        Worth reading on connect as well as after a write: the status byte
+        is how the thermostat reports that a previously written value has
+        gone stale, which a client that has just reconnected would otherwise
+        have no way to notice.
+
+        Raises `UnsupportedAttributeError` on a model that has already
+        refused it; see `is_attribute_supported`.
+        """
+        self._raise_if_unsupported(FunctionalDomain.SENSORS, 4)
+
+        return await self.protocol.read_written_outdoor_temperature()
+
+    async def read_written_outdoor_temperature_and_wait(self, timeout: int = None):
+        """Send a request for the written outdoor temperature value
+        (spec 5.4) and wait for the response"""
+        sequence = await self.read_written_outdoor_temperature()
+        return await self.wait_for_response(
+            FunctionalDomain.SENSORS, 4, timeout, sequence=sequence
         )
 
     async def read_control(self):
@@ -1093,9 +1391,32 @@ class AprilaireClient(SocketClient):
     async def set_air_cleaning(self, mode: int, event: int):
         await self.protocol.set_air_cleaning(mode, event)
 
-    async def set_written_outdoor_temperature_value(self, value: int):
-        """Send a request to update the written outdoor temperature value"""
+    async def set_written_outdoor_temperature_value(self, value: float):
+        """Send a request to update the written outdoor temperature value
+        (spec 5.4), then read back what the thermostat actually stored.
+
+        `value` is degrees Celsius and may carry a half degree; it is packed
+        by `Packet._encode_temperature`, so callers shouldn't pre-round it.
+
+        Spec 5.4 wants this refreshed more often than every ten minutes, or
+        the thermostat marks the value stale.
+
+        Raises `UnsupportedAttributeError` on a model that has already
+        refused this attribute - in either direction, since the three
+        statuses that get remembered (`UNSUPPORTED_NACK_STATUSES`) all mean
+        the device has no such attribute at all rather than that it declined
+        this particular request.
+
+        The read-back is composed here rather than in the protocol - unlike
+        `set_dehumidification_setpoint` and `set_humidification_setpoint`,
+        which do it a layer down - so that it goes through
+        `read_written_outdoor_temperature` and honours the same gate.
+        """
+        self._raise_if_unsupported(FunctionalDomain.SENSORS, 4)
+
         await self.protocol.set_written_outdoor_temperature_value(value)
+
+        await self.read_written_outdoor_temperature()
 
     async def read_thermostat_iaq_available(self):
         """Send a request to read the thermostat/IAQ available data"""
