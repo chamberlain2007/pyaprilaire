@@ -9,23 +9,15 @@ import logging
 from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain
 from .packet import MAPPING, NackPacket, Packet
 
-# Byte indices into the 29-byte COS Subscriptions mask (spec 7.1), used to
-# gate which COS messages are emitted. Only the indices for messages this
-# mock actually knows how to build are named; the rest of the mask is still
-# stored (and can be inspected) but has no effect here.
-COS_INSTALLER_THERMOSTAT_SETTINGS = 0
-COS_SETPOINT_MODE = 5
-COS_DEHUMIDIFICATION_SETPOINT = 6
-COS_HUMIDIFICATION_SETPOINT = 7
-COS_FRESH_AIR_SETTING = 8
-COS_AIR_CLEANING_SETTING = 9
-COS_THERMOSTAT_IAQ_AVAILABLE = 10
-COS_SCHEDULE_HOLD = 14
-COS_THERMOSTAT_LOCATION_NAME = 20
-COS_CONTROLLING_SENSOR_VALUES = 22
-COS_THERMOSTAT_STATUS = 24
-COS_IAQ_STATUS = 25
-COS_MODEL_REVISION = 26
+# The COS Subscriptions channels (spec 7.1), in wire order, taken straight
+# from packet.py's schema for STATUS 0x01 so the mock's mask can never drift
+# out of step with what the parser produces. Byte 21 is Reserved and appears
+# here as None: it has no attribute name, is never subscribable, and only
+# occupies its structurally-required place in the message.
+COS_SUBSCRIPTION_ATTRIBUTES = [
+    attribute_info[0]
+    for attribute_info in MAPPING[Action.READ_RESPONSE][FunctionalDomain.STATUS][1]
+]
 
 
 class CustomFormatter(logging.Formatter):
@@ -100,9 +92,14 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.mac_address = [1, 2, 3, 4, 5, 6]
 
         # All COS subscription outputs are enabled by default (spec 7.1). A
-        # WRITE to STATUS 0x01 (COS Subscriptions) overwrites this mask; see
-        # _configure_cos / _queue_cos.
-        self.cos_mask = [1] * 29
+        # WRITE to STATUS 0x01 (COS Subscriptions) overwrites this mask, and
+        # a READ reports it back; see _configure_cos / _status_1_data /
+        # _queue_cos.
+        self.cos_mask = {
+            attribute: 1
+            for attribute in COS_SUBSCRIPTION_ATTRIBUTES
+            if attribute is not None
+        }
 
         self.packet_queue = asyncio.Queue()
 
@@ -123,17 +120,17 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         return self.sequence
 
-    def _cos_enabled(self, mask_index: int) -> bool:
-        return self.cos_mask[mask_index] == 1
+    def _cos_enabled(self, channel: Attribute) -> bool:
+        return self.cos_mask.get(channel) == 1
 
-    def _queue_cos(self, mask_index: int | None, packet: Packet) -> None:
-        """Queue a COS packet if its COS Subscriptions bit is enabled.
+    def _queue_cos(self, channel: Attribute | None, packet: Packet) -> None:
+        """Queue a COS packet if its COS Subscriptions channel is enabled.
 
-        mask_index=None means the message is always sent regardless of
+        channel=None means the message is always sent regardless of
         subscription state (e.g. Sync complete and Thermostat Error, which
         spec 7.2 calls out as always being part of a sync).
         """
-        if mask_index is not None and not self._cos_enabled(mask_index):
+        if channel is not None and not self._cos_enabled(channel):
             return
 
         self.packet_queue.put_nowait(packet)
@@ -222,7 +219,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         """
 
         self._queue_cos(
-            COS_INSTALLER_THERMOSTAT_SETTINGS,
+            Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS,
             Packet(
                 Action.COS,
                 FunctionalDomain.SETUP,
@@ -232,7 +229,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_SETPOINT_MODE,
+            Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -242,7 +239,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_DEHUMIDIFICATION_SETPOINT,
+            Attribute.COS_DEHUMIDIFICATION_SETPOINT,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -254,7 +251,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_HUMIDIFICATION_SETPOINT,
+            Attribute.COS_HUMIDIFICATION_SETPOINT,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -264,7 +261,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_FRESH_AIR_SETTING,
+            Attribute.COS_FRESH_AIR_SETTING,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -277,7 +274,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_AIR_CLEANING_SETTING,
+            Attribute.COS_AIR_CLEANING_SETTINGS,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -290,7 +287,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_THERMOSTAT_IAQ_AVAILABLE,
+            Attribute.COS_THERMOSTAT_IAQ_AVAILABLE,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -300,7 +297,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_SCHEDULE_HOLD,
+            Attribute.COS_SCHEDULE_HOLD,
             Packet(
                 Action.COS,
                 FunctionalDomain.SCHEDULING,
@@ -310,7 +307,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_THERMOSTAT_LOCATION_NAME,
+            Attribute.COS_THERMOSTAT_LOCATION_AND_NAME,
             Packet(
                 Action.COS,
                 FunctionalDomain.IDENTIFICATION,
@@ -320,7 +317,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_CONTROLLING_SENSOR_VALUES,
+            Attribute.COS_CONTROLLING_SENSOR_VALUES,
             Packet(
                 Action.COS,
                 FunctionalDomain.SENSORS,
@@ -330,7 +327,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_THERMOSTAT_STATUS,
+            Attribute.COS_THERMOSTAT_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -340,7 +337,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_IAQ_STATUS,
+            Attribute.COS_IAQ_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -350,7 +347,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_MODEL_REVISION,
+            Attribute.COS_MODEL_AND_REVISION,
             Packet(
                 Action.COS,
                 FunctionalDomain.IDENTIFICATION,
@@ -419,16 +416,37 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         asyncio.ensure_future(self._queue_loop())
 
-    def _configure_cos(self, raw_mask: list[int]) -> None:
+    def _configure_cos(self, packet: Packet) -> None:
         """Handle a WRITE to STATUS 0x01 (COS Subscriptions, spec 7.1).
 
-        packet.py's MAPPING has no schema for this attribute - client.py
-        sends it as 29 unstructured raw bytes - so Packet.parse() can't
-        yield it as a Packet the way it does every other attribute; see
-        _prescan_raw_frames for where this is detected instead.
+        Every channel the client omits keeps its current value: spec section
+        G defines a NULL (0) byte in a write as "leave this field
+        unmodified", and Packet.parse reports those bytes as a 0 rather than
+        dropping them, so an explicit 0 from the client (disable this
+        channel) is indistinguishable from an omission at this layer. The
+        client always writes the complete 29-byte mask, which is the case
+        that matters here.
         """
-        _LOGGER.info("Configuring COS subscriptions: %s", raw_mask)
-        self.cos_mask = raw_mask
+        self.cos_mask.update(
+            {
+                attribute: value
+                for attribute, value in packet.data.items()
+                if attribute in self.cos_mask
+            }
+        )
+
+        _LOGGER.info("Configuring COS subscriptions: %s", self._status_1_data())
+
+    def _status_1_data(self) -> dict:
+        """The current COS Subscriptions mask (spec 7.1), as reported by a
+        read of STATUS 0x01.
+
+        client.py's configure_cos() reads this before deciding whether a
+        write is warranted at all, so an unanswered read here costs the
+        client its read timeout on every connect and then makes it write the
+        mask unconditionally.
+        """
+        return dict(self.cos_mask)
 
     def _prescan_raw_frames(self, data: bytes) -> None:
         """Walk the raw frame stream the same way Packet.parse() does, to
@@ -437,11 +455,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         unrecognized or unsupported functional domain (0x06), or an
         attribute this action/domain doesn't define (0x07) - spec H.5: "A
         NAck is sent in response to any unhandled, corrupt, or
-        un-parse-able action received with a suitable status code." Also
-        picks out the WRITE STATUS 0x01 (COS Subscriptions) case - see
-        _configure_cos - which packet.py's parser would otherwise treat the
-        same as any other unmapped attribute, even though it's a legitimate,
-        spec-documented one (spec 7.1).
+        un-parse-able action received with a suitable status code."
 
         NOTE: this necessarily duplicates a small amount of Packet.parse()'s
         header-walking logic (revision/sequence/count/action/domain/
@@ -488,12 +502,6 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 continue
 
             if (
-                action == Action.WRITE
-                and domain == FunctionalDomain.STATUS
-                and attribute == 1
-            ):
-                self._configure_cos(list(data[index + 7 : crc_index]))
-            elif (
                 action == Action.READ_REQUEST
                 and domain == FunctionalDomain.SETUP
                 and attribute == 8
@@ -577,7 +585,9 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             else:
                 self._send_nack(0x07, sequence)
         elif domain == FunctionalDomain.STATUS:
-            if attribute == 2:
+            if attribute == 1:
+                self._reply(FunctionalDomain.STATUS, 1, sequence, self._status_1_data())
+            elif attribute == 2:
                 # Sync is write-only (spec 7.2).
                 self._send_nack(0x20, sequence)
             elif attribute == 6:
@@ -640,7 +650,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             self.hold = 1
 
         self._queue_cos(
-            COS_SETPOINT_MODE,
+            Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -650,7 +660,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_THERMOSTAT_STATUS,
+            Attribute.COS_THERMOSTAT_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -660,7 +670,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_SCHEDULE_HOLD,
+            Attribute.COS_SCHEDULE_HOLD,
             Packet(
                 Action.COS,
                 FunctionalDomain.SCHEDULING,
@@ -682,7 +692,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.dehumidification_status = 2
 
         self._queue_cos(
-            COS_DEHUMIDIFICATION_SETPOINT,
+            Attribute.COS_DEHUMIDIFICATION_SETPOINT,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -694,7 +704,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_IAQ_STATUS,
+            Attribute.COS_IAQ_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -717,7 +727,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.humidification_status = 2
 
         self._queue_cos(
-            COS_HUMIDIFICATION_SETPOINT,
+            Attribute.COS_HUMIDIFICATION_SETPOINT,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -727,7 +737,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_IAQ_STATUS,
+            Attribute.COS_IAQ_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -746,7 +756,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         )
 
         self._queue_cos(
-            COS_FRESH_AIR_SETTING,
+            Attribute.COS_FRESH_AIR_SETTING,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -759,7 +769,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_IAQ_STATUS,
+            Attribute.COS_IAQ_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -778,7 +788,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         )
 
         self._queue_cos(
-            COS_AIR_CLEANING_SETTING,
+            Attribute.COS_AIR_CLEANING_SETTINGS,
             Packet(
                 Action.COS,
                 FunctionalDomain.CONTROL,
@@ -791,7 +801,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
         self._queue_cos(
-            COS_IAQ_STATUS,
+            Attribute.COS_IAQ_STATUS,
             Packet(
                 Action.COS,
                 FunctionalDomain.STATUS,
@@ -806,7 +816,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             self.hold = packet.data[Attribute.HOLD]
 
         self._queue_cos(
-            COS_SCHEDULE_HOLD,
+            Attribute.COS_SCHEDULE_HOLD,
             Packet(
                 Action.COS,
                 FunctionalDomain.SCHEDULING,
@@ -880,7 +890,9 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             else:
                 self._send_nack(0x07, sequence)
         elif domain == FunctionalDomain.STATUS:
-            if attribute == 2:
+            if attribute == 1:
+                self._configure_cos(packet)
+            elif attribute == 2:
                 self._write_sync(packet)
             elif attribute in (6, 7, 8):
                 # Thermostat Status / IAQ Status / Thermostat Error are all
