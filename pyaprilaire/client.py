@@ -74,7 +74,23 @@ UNSUPPORTED_NACK_STATUSES = frozenset(
 )
 
 
-class NackError(Exception):
+class AprilaireResponseError(Exception):
+    """Base class for a request failing to produce response data.
+
+    A caller that only needs to know it has no data can catch this; the
+    subclasses say why, which is what decides whether trying again is
+    worth anything:
+
+      `ResponseTimeoutError` - nothing came back in time. The request may
+        well succeed on a later attempt; the thermostat never said
+        otherwise.
+      `NackError` - the thermostat explicitly rejected the request, and
+        permanently: the status codes the spec calls for retrying are
+        already retried before this surfaces.
+    """
+
+
+class NackError(AprilaireResponseError):
     """Raised to fail a `wait_for_response` future for a terminally-NACKed
     request.
 
@@ -113,11 +129,46 @@ class UnsupportedAttributeError(NackError):
 
     It subclasses `NackError`, carrying the status of the NACK behind it,
     because it *is* that same failure. A caller handling `NackError`
-    therefore needs no changes. Note this is raised rather than signalled by
-    returning `None`: `None` already means "timed out" (see
-    `wait_for_response`), which is the opposite situation - a timed-out
-    request may still succeed on a retry, an unsupported one never will.
+    therefore needs no changes. Note this is a distinct type from
+    `ResponseTimeoutError` rather than the same "no data" signal: a
+    timed-out request may still succeed on a retry, an unsupported one
+    never will.
     """
+
+
+class ResponseTimeoutError(AprilaireResponseError):
+    """Raised when no response arrived for a request before its timeout.
+
+    This is a failure to hear back, not a refusal - the thermostat may
+    simply be slow, or the socket may have silently stalled (see the
+    README on this device's connection behaviour), so the same request may
+    succeed on a later attempt. Contrast `NackError`, which is the device
+    explicitly and permanently rejecting the request.
+
+    Deliberately *not* a subclass of `asyncio.TimeoutError`: that name is
+    two different classes depending on the Python version - the builtin
+    `TimeoutError` (itself an `OSError`) from 3.11 on, and a plain
+    `Exception` subclass before that - so inheriting it would give this
+    error a lineage that changes under the caller's feet, and on 3.11+
+    would quietly put a protocol-level timeout inside every `except
+    OSError` meant for socket failures.
+    """
+
+    def __init__(
+        self,
+        functional_domain: FunctionalDomain,
+        attribute: int,
+        timeout: float | None,
+    ) -> None:
+        self.functional_domain = functional_domain
+        self.attribute = attribute
+        self.timeout = timeout
+
+        super().__init__(
+            f"Timed out after {timeout} seconds waiting for a response for "
+            f"{functional_domain.name} ({int(functional_domain)}), "
+            f"attribute {attribute}"
+        )
 
 
 # How long to wait for a COS Subscriptions read response (spec 7.1) before
@@ -1150,8 +1201,9 @@ class AprilaireClient(SocketClient):
         finally:
             # The device only accepts one home automation connection at a
             # time (see the README), so this connection must be closed on
-            # every exit path - a failed `start_listen_once`, a NACKed read
-            # propagating a `NackError` out of `wait_for_response`, or
+            # every exit path - a failed `start_listen_once`, a read
+            # propagating an `AprilaireResponseError` (a NACK, or no
+            # response before the timeout) out of `wait_for_response`, or
             # success - not just the success path. Otherwise this "test the
             # connection" helper would be exactly what leaks the single
             # connection slot. `stop_listen` tolerates being called when no
@@ -1186,21 +1238,19 @@ class AprilaireClient(SocketClient):
         (e.g. observing the next update to a value, not correlating a
         specific request's answer).
 
-        Returns the response data, `None` on timeout (as before), or raises
-        `NackError` if the request was terminally NACKed - a status code the
-        spec doesn't call for retrying (spec section H.5), or one that was
-        retried and still NACKed after exhausting its retries. This is
-        deliberately distinct from the `None` timeout return: `None` means
-        "no answer arrived in time" (the request may yet succeed, or may
-        already be queued for a NACK retry), while `NackError` means the
-        thermostat explicitly, and permanently, rejected the request - a
-        caller needs to be able to tell those apart to react correctly
-        (e.g. surface a rejected setpoint write to a user, versus silently
-        retrying a slow poll). Raising also lets a caller ignore the
-        distinction entirely with a bare `except NackError`, rather than
-        having to inspect a returned status for every call site - and
-        existing callers that only ever saw `None` keep working unchanged
-        for the timeout case.
+        Returns the response data, or raises `AprilaireResponseError` -
+        `ResponseTimeoutError` if no response arrived within `timeout`,
+        `NackError` if the request was terminally NACKed (a status code
+        the spec doesn't call for retrying, per spec section H.5, or one
+        that was retried and still NACKed after exhausting its retries).
+
+        Both failures raise so that neither can be missed by a caller that
+        forgets to check a return value: this method either produces
+        response data or raises, and never hands back a value that isn't
+        an answer. They stay separate types because the difference decides
+        what a caller should do - a timeout may yet succeed on a retry,
+        while a NACK will not - and share `AprilaireResponseError` for a
+        caller that only cares that no data arrived.
         """
 
         loop = asyncio.get_event_loop()
@@ -1214,16 +1264,29 @@ class AprilaireClient(SocketClient):
 
         try:
             return await asyncio.wait_for(future, timeout)
-        except asyncio.exceptions.TimeoutError:
-            self.logger.error(
-                "Hit timeout of %d waiting for %s, %d",
+        except asyncio.exceptions.TimeoutError as exc:
+            # Logged at debug, not error: the timeout is reported to the
+            # caller by the raise, and only the caller knows whether a
+            # missed response here matters (a failed setup) or is routine
+            # (a poll that will come round again). Logging it as an error
+            # here would put a scary line in the log for a timeout the
+            # caller handled perfectly well.
+            self.logger.debug(
+                "Hit timeout of %s waiting for %s, %d",
                 timeout,
                 int(functional_domain),
                 attribute,
             )
-            return None
+            raise ResponseTimeoutError(functional_domain, attribute, timeout) from exc
         except NackError as exc:
-            self.logger.error(
+            # Debug for the same reason as the timeout above: this branch
+            # re-raises, so the failure is already reported to the caller,
+            # and this line would only duplicate it. The NACK itself is
+            # still logged at error level by
+            # `_AprilaireClientProtocol._handle_nack`, which is the only
+            # record of it for the many requests this library sends
+            # without waiting on a response.
+            self.logger.debug(
                 "Received NACK waiting for %s, %d: %s",
                 int(functional_domain),
                 attribute,
@@ -1501,9 +1564,20 @@ class AprilaireClient(SocketClient):
                 }
             )
 
-        current = await self.read_cos_subscriptions_and_wait(
-            COS_SUBSCRIPTIONS_READ_TIMEOUT
-        )
+        try:
+            current = await self.read_cos_subscriptions_and_wait(
+                COS_SUBSCRIPTIONS_READ_TIMEOUT
+            )
+        except ResponseTimeoutError:
+            # Not an error here: with the current mask unknown, this falls
+            # through to writing the desired one unconditionally, which is
+            # the same thing it would do for a mask that doesn't match.
+            self.logger.debug(
+                "Timed out reading the current COS subscriptions; "
+                "writing the desired mask unconditionally"
+            )
+
+            current = None
 
         if current is not None and all(
             current.get(attribute) == value for attribute, value in desired.items()
