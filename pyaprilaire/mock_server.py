@@ -103,6 +103,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         self.packet_queue = asyncio.Queue()
 
+        # Bytes received but not yet forming a complete frame; see
+        # data_received.
+        self.receive_buffer = bytearray()
+
         # Messages sent by the Thermostat use sequence numbers 128-255
         # (spec F, note 1). Starting at 127 makes the first _get_sequence()
         # call return 128.
@@ -413,6 +417,10 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         _LOGGER.info("Connection made")
 
         self.transport = transport
+
+        # A fresh connection must not inherit a partial frame left over
+        # from whatever connection preceded it.
+        self.receive_buffer = bytearray()
 
         asyncio.ensure_future(self._queue_loop())
 
@@ -912,9 +920,25 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def data_received(self, data: bytes) -> None:
         _LOGGER.info("Received data: %s", data.hex(" ", 1))
 
-        self._prescan_raw_frames(data)
+        # A single TCP read carries no guarantee that frame boundaries line
+        # up with read boundaries - it can hold several frames, or only part
+        # of one. Buffer what arrives and only act on the complete frames
+        # that leaves, the same way _AprilaireClientProtocol does on the
+        # other end of the socket; a mock that instead dropped a split frame
+        # would make the client look broken when it isn't.
+        self.receive_buffer.extend(data)
 
-        for packet in Packet.parse(data):
+        parseable_length = Packet.get_parseable_length(self.receive_buffer)
+
+        if parseable_length == 0:
+            return
+
+        parseable_data = bytes(self.receive_buffer[:parseable_length])
+        del self.receive_buffer[:parseable_length]
+
+        self._prescan_raw_frames(parseable_data)
+
+        for packet in Packet.parse(parseable_data):
             if packet.action == Action.READ_REQUEST:
                 self._handle_read_request(packet)
             elif packet.action == Action.WRITE:
