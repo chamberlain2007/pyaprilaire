@@ -191,8 +191,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             [FunctionalDomain, int, dict[str, Any], int | None], None
         ],
         reconnect_action: Callable[[], None],
+        connected_action: Callable[[], Awaitable[None]] | None,
         logger: Logger,
-        connected_action: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the protocol"""
         self.data_received_callback = data_received_callback
@@ -205,9 +205,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         # counterpart to `reconnect_action`, which this class already fires
         # from `connection_lost`: deciding *which* requests a new
         # connection should make, and in what order, is client policy - all
-        # this class knows is how to put a packet on the wire. None when a
-        # caller constructs this protocol directly (e.g. tests), in which
-        # case connecting just starts the queue loop.
+        # this class knows is how to put a packet on the wire. Explicitly
+        # `None` for a caller that constructs this protocol directly (e.g.
+        # tests), in which case connecting just starts the queue loop.
         self.connected_action = connected_action
 
         self.transport: asyncio.Transport = None
@@ -784,8 +784,8 @@ class AprilaireClient(SocketClient):
         return _AprilaireClientProtocol(
             self.data_received,
             self._reconnect_with_delay,
-            self.logger,
             self.connection_made,
+            self.logger,
         )
 
     async def connection_made(self):

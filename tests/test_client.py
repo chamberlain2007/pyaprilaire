@@ -32,7 +32,9 @@ def protocol(event_loop, logger):
     data_received_callback = AsyncMock()
     reconnect_action = AsyncMock()
 
-    return _AprilaireClientProtocol(data_received_callback, reconnect_action, logger)
+    return _AprilaireClientProtocol(
+        data_received_callback, reconnect_action, None, logger
+    )
 
 
 @pytest.fixture
@@ -59,9 +61,8 @@ def test_protocol_connection_made(protocol: _AprilaireClientProtocol):
 def test_protocol_connection_made_without_connected_action(
     protocol: _AprilaireClientProtocol,
 ):
-    # The `protocol` fixture constructs it with only the first three
-    # positional args, so there is no connected_action - connecting must
-    # still start the queue loop rather than raising.
+    # The `protocol` fixture passes `None` for connected_action, so
+    # connecting must still start the queue loop rather than raising.
     protocol._queue_loop = AsyncMock()
 
     assert protocol.connected_action is None
