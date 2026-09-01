@@ -5,7 +5,14 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from pyaprilaire.client import AprilaireClient, NackError, _AprilaireClientProtocol
+from pyaprilaire.client import (
+    COS_SUBSCRIPTIONS,
+    COS_SUBSCRIPTIONS_READ_TIMEOUT,
+    DEFAULT_COS_SUBSCRIPTIONS,
+    AprilaireClient,
+    NackError,
+    _AprilaireClientProtocol,
+)
 from pyaprilaire.const import Action, Attribute, FunctionalDomain, NackStatus
 from pyaprilaire.packet import Packet
 
@@ -25,7 +32,7 @@ def protocol(event_loop, logger):
     data_received_callback = AsyncMock()
     reconnect_action = AsyncMock()
 
-    return _AprilaireClientProtocol(data_received_callback, reconnect_action, logger)
+    return _AprilaireClientProtocol(data_received_callback, logger, reconnect_action)
 
 
 @pytest.fixture
@@ -41,22 +48,26 @@ def client(event_loop, logger, protocol):
 
 def test_protocol_connection_made(protocol: _AprilaireClientProtocol):
     protocol._queue_loop = AsyncMock()
-    protocol._update_status = AsyncMock()
+    protocol.connected_action = AsyncMock()
 
     protocol.connection_made(None)
 
     assert protocol._queue_loop.call_count == 1
-    assert protocol._update_status.call_count == 1
+    assert protocol.connected_action.call_count == 1
 
 
-async def test_protocol_update_status(protocol: _AprilaireClientProtocol):
-    sleep_mock = AsyncMock()
+def test_protocol_connection_made_without_connected_action(
+    protocol: _AprilaireClientProtocol,
+):
+    # The `protocol` fixture omits connected_action, so connecting must
+    # still start the queue loop rather than raising.
+    protocol._queue_loop = AsyncMock()
 
-    with patch("asyncio.sleep", new=sleep_mock):
-        await protocol._update_status()
+    assert protocol.connected_action is None
 
-    assert protocol.packet_queue.qsize() == 9
-    assert sleep_mock.call_count == 1
+    protocol.connection_made(None)
+
+    assert protocol._queue_loop.call_count == 1
 
 
 async def test_protocol_queue_loop(protocol: _AprilaireClientProtocol):
@@ -309,7 +320,7 @@ def test_protocol_connection_made_resets_receive_buffer(
     protocol: _AprilaireClientProtocol,
 ):
     protocol._queue_loop = AsyncMock()
-    protocol._update_status = AsyncMock()
+    protocol.connected_action = AsyncMock()
 
     protocol._receive_buffer.extend(b"\x01\x01\x00")
 
@@ -334,6 +345,19 @@ def test_protocol_mode_re_read(protocol: _AprilaireClientProtocol):
     protocol.data_received(bytes([1, 1, 0, 7, 5, 2, 1, 1, 2, 10, 20, 127]))
 
     assert protocol.read_control.call_count == 1
+
+
+def test_protocol_connection_lost_without_reconnect_action(logger):
+    # reconnect_action is optional in the same way connected_action is -
+    # losing the connection without one must still notify the callback
+    # rather than raising.
+    protocol = _AprilaireClientProtocol(AsyncMock(), logger)
+
+    assert protocol.reconnect_action is None
+
+    protocol.connection_lost(None)
+
+    assert protocol.data_received_callback.call_count == 1
 
 
 def test_protocol_connection_lost(protocol: _AprilaireClientProtocol):
@@ -512,8 +536,72 @@ async def test_protocol_sync(protocol: _AprilaireClientProtocol):
     )
 
 
-async def test_protocol_configure_cos(protocol: _AprilaireClientProtocol):
-    pass
+def _expected_cos_raw_data(overrides: dict[Attribute, int] | None = None) -> list[int]:
+    desired = dict(DEFAULT_COS_SUBSCRIPTIONS)
+
+    if overrides:
+        desired.update(overrides)
+
+    return [
+        0 if attribute is None else desired[attribute]
+        for attribute, _ in COS_SUBSCRIPTIONS
+    ]
+
+
+async def test_protocol_read_cos_subscriptions(protocol: _AprilaireClientProtocol):
+    sequence = await protocol.read_cos_subscriptions()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 1)
+    )
+
+    # The sequence number must come back so the caller can correlate the
+    # response to this exact request (spec section F notes 2-3) rather than
+    # to an unsolicited STATUS/1 COS.
+    assert sequence == list(protocol.packet_queue._queue)[0].sequence
+
+
+async def test_protocol_write_cos_subscriptions(protocol: _AprilaireClientProtocol):
+    await protocol.write_cos_subscriptions(dict(DEFAULT_COS_SUBSCRIPTIONS))
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+
+    packet = queue_items[0]
+
+    assert packet.action == Action.WRITE
+    assert packet.functional_domain == FunctionalDomain.STATUS
+    assert packet.attribute == 1
+    assert len(packet.raw_data) == 29
+    assert packet.raw_data == _expected_cos_raw_data()
+
+
+async def test_protocol_write_cos_subscriptions_reserved_byte_is_placeholder_zero(
+    protocol: _AprilaireClientProtocol,
+):
+    await protocol.write_cos_subscriptions(dict(DEFAULT_COS_SUBSCRIPTIONS))
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert queue_items[0].raw_data[21] == 0
+
+
+def test_cos_subscriptions_is_29_bytes_in_spec_order():
+    assert len(COS_SUBSCRIPTIONS) == 29
+    assert COS_SUBSCRIPTIONS[21][0] is None
+
+
+def test_cos_subscriptions_previously_disabled_dependent_channels_now_enabled():
+    # These channels back library functionality and used to be written as
+    # disabled unconditionally on every connect - see PR description.
+    for attribute in (
+        Attribute.COS_SERVICE_REMINDERS_STATUS,  # spec J.18
+        Attribute.COS_ALERTS_STATUS,  # spec J.19
+        Attribute.COS_ALERTS_SETTINGS,  # spec J.19
+        Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,  # spec J.15
+    ):
+        assert DEFAULT_COS_SUBSCRIPTIONS[attribute] == 1
 
 
 async def test_protocol_read_mac_address(protocol: _AprilaireClientProtocol):
@@ -836,10 +924,189 @@ async def test_client_sync(client: AprilaireClient, protocol: _AprilaireClientPr
     )
 
 
-async def test_client_configure_cos(
+async def test_client_configure_cos_reads_before_writing(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
-    pass
+    client.wait_for_response = AsyncMock(return_value=None)
+
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 2
+
+    assert queue_items[0].action == Action.READ_REQUEST
+    assert queue_items[0].functional_domain == FunctionalDomain.STATUS
+    assert queue_items[0].attribute == 1
+
+    assert queue_items[1].action == Action.WRITE
+    assert queue_items[1].functional_domain == FunctionalDomain.STATUS
+    assert queue_items[1].attribute == 1
+    assert queue_items[1].raw_data == _expected_cos_raw_data()
+
+    # The wait must be correlated to the read's own sequence number, so an
+    # unsolicited STATUS/1 COS can't be mistaken for its response.
+    client.wait_for_response.assert_called_once_with(
+        FunctionalDomain.STATUS,
+        1,
+        COS_SUBSCRIPTIONS_READ_TIMEOUT,
+        sequence=queue_items[0].sequence,
+    )
+
+
+async def test_client_configure_cos_skips_write_when_matching(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    # The thermostat already reports exactly the desired mask (e.g. it's
+    # still at its factory default, per spec 7.1's "Default settings are in
+    # bold") - no write should be issued.
+    client.wait_for_response = AsyncMock(return_value=dict(DEFAULT_COS_SUBSCRIPTIONS))
+
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+    assert queue_items[0].action == Action.READ_REQUEST
+
+
+async def test_client_configure_cos_writes_when_mismatched(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    current = dict(DEFAULT_COS_SUBSCRIPTIONS)
+    current[Attribute.COS_DEHUMIDIFICATION_SETPOINT] = 0
+
+    client.wait_for_response = AsyncMock(return_value=current)
+
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 2
+
+    write_packet = queue_items[1]
+
+    assert write_packet.action == Action.WRITE
+    assert len(write_packet.raw_data) == 29
+    assert write_packet.raw_data == _expected_cos_raw_data()
+
+
+async def test_client_configure_cos_reserved_byte_never_forced(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    # The real parser (packet.py) drops the Reserved byte 21 entirely, so a
+    # read response never carries a key for it - that must not be treated
+    # as a mismatch that triggers a write.
+    current = dict(DEFAULT_COS_SUBSCRIPTIONS)
+
+    assert None not in current
+
+    client.wait_for_response = AsyncMock(return_value=current)
+
+    await client.configure_cos()
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert len(queue_items) == 1
+
+
+async def test_client_configure_cos_overrides(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    client.wait_for_response = AsyncMock(return_value=None)
+
+    await client.configure_cos(overrides={Attribute.COS_DEHUMIDIFICATION_SETPOINT: 0})
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert queue_items[1].raw_data == _expected_cos_raw_data(
+        {Attribute.COS_DEHUMIDIFICATION_SETPOINT: 0}
+    )
+
+
+async def test_client_configure_cos_overrides_ignore_unmapped_attributes(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    # An override for something outside the COS mask (or the Reserved byte,
+    # which has no Attribute) is silently ignored rather than raising.
+    client.wait_for_response = AsyncMock(return_value=None)
+
+    await client.configure_cos(overrides={Attribute.MODE: 5})
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert queue_items[1].raw_data == _expected_cos_raw_data()
+
+
+async def test_client_read_cos_subscriptions(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_cos_subscriptions()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 1)
+    )
+
+
+async def test_client_read_cos_subscriptions_and_wait(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    client.wait_for_response = AsyncMock(return_value={Attribute.COS_IAQ_STATUS: 1})
+
+    result = await client.read_cos_subscriptions_and_wait(1)
+
+    queue_items = list(protocol.packet_queue._queue)
+
+    assert result == {Attribute.COS_IAQ_STATUS: 1}
+    client.wait_for_response.assert_called_once_with(
+        FunctionalDomain.STATUS, 1, 1, sequence=queue_items[0].sequence
+    )
+
+
+def test_client_create_protocol_wires_connection_made(client: AprilaireClient):
+    # The protocol only knows how to send and receive packets; which
+    # requests a fresh connection should make is the client's business.
+    created_protocol = client.create_protocol()
+
+    assert created_protocol.connected_action == client.connection_made
+
+
+async def test_client_connection_made_updates_status(client: AprilaireClient):
+    client._update_status = AsyncMock()
+
+    await client.connection_made()
+
+    assert client._update_status.call_count == 1
+
+
+def test_client_connected_attribute_not_shadowed_by_a_method(
+    client: AprilaireClient,
+):
+    # `SocketClient.__init__` sets `self.connected` as a bool, so the
+    # connect hook must not be named `connected` - it would be shadowed on
+    # every instance and, being falsy, silently skipped by the protocol's
+    # `if self.connected_action:` check.
+    assert client.connected is False
+    assert callable(client.connection_made)
+
+
+async def test_client_update_status(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    client.wait_for_response = AsyncMock(return_value=None)
+
+    sleep_mock = AsyncMock()
+
+    with patch("asyncio.sleep", new=sleep_mock):
+        await client._update_status()
+
+    # mac_address, thermostat_status, iaq_status, control,
+    # thermostat_iaq_available, sensors, thermostat_name, scheduling,
+    # configure_cos (a read, then a write because the read returned no
+    # current mask), dehumidification_setpoint, humidification_setpoint,
+    # sync.
+    assert protocol.packet_queue.qsize() == 13
+    assert sleep_mock.call_count == 1
 
 
 async def test_client_read_mac_address(
