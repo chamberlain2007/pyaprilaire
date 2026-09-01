@@ -46,7 +46,28 @@ Release PRs (`release/X.Y.Z` branches targeting `main`, titled `release: X.Y.Z`)
 
 ## Pull requests
 
-Every pull request should use the [pull request template](.github/pull_request_template.md), which is applied automatically when opening a PR. Fill in each section rather than deleting it.
+Every pull request should use the [pull request template](.github/pull_request_template.md), which is applied automatically when opening a PR. This is not optional, and it applies equally to human contributors and AI agents - an agent that opens a PR must read the template file and build the description from it rather than writing a description of its own shape.
+
+Concretely, that means:
+
+- Keep every heading from the template, spelled and ordered exactly as the template has them. Do not add, drop, rename, or reorder sections.
+- Fill in each section. A section that genuinely does not apply gets `None` (or a one-line reason), never an empty body and never a deleted heading.
+- Replace the `<!-- ... -->` prompts with real content. They are instructions for the author, not text to keep - a merged PR body should contain no leftover template comments.
+- Keep the checklist, and tick a box only when the thing is actually true. Leave the rest unticked rather than removing them.
+- In "Type of change", delete the entries that do not apply, leaving the one (or few) that do.
+
+### Formatting PR descriptions and comments
+
+Anything rendered as Markdown on GitHub - PR descriptions, PR and issue comments, review comments - should be written in flowing paragraphs. GitHub reflows paragraph text to the reader's window width, so manual wrapping is not needed and actively hurts: it fights the reader's width, and it turns into ragged half-lines as soon as anyone edits the text.
+
+So:
+
+- Write a paragraph as one continuous line, however long it runs. Do not hard-wrap prose at 72, 80, or 100 columns.
+- Separate paragraphs with a blank line. That blank line is what makes a new paragraph - a single newline inside a paragraph is not a paragraph break, and a trailing double space to force a `<br>` is not one either.
+- Use real Markdown structure for structure: headings, `-` lists, numbered lists, tables, fenced code blocks. Do not fake a list or a table by breaking lines by hand.
+- Line breaks are still correct inside fenced code blocks, and each list item is still its own line - the rule above is about prose, not about literal content.
+
+Commit message bodies are plain text rather than rendered Markdown, so the usual git convention of wrapping the body around 72 columns still applies there.
 
 ## Linting
 
