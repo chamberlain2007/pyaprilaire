@@ -573,7 +573,15 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             }
         )
 
-        _LOGGER.info("Configuring COS subscriptions: %s", self._status_1_data())
+        _LOGGER.info(
+            "COS subscriptions now enabled: %s",
+            ", ".join(
+                str(attribute)
+                for attribute, value in self.cos_mask.items()
+                if value == 1
+            )
+            or "(none)",
+        )
 
     def _status_1_data(self) -> dict:
         """The current COS Subscriptions mask (spec 7.1), as reported by a
