@@ -40,6 +40,20 @@ from .packet import MAPPING, NackPacket, Packet
 # rather than leaving the hold end fields at a meaningless zero.
 TEMPORARY_HOLD_HOURS = 2
 
+# Spec 5.4: a written outdoor temperature has to be refreshed more often
+# than every ten minutes, or the thermostat stops trusting it. This is how
+# long the mock waits after a write before reporting the value as stale.
+WRITTEN_OUTDOOR_TIMEOUT_SECONDS = 600
+
+# Spec 5.4's status byte for the Written Outdoor Temperature Value. Value 4
+# there is the "no usable value" state - what the thermostat reports before
+# an automation system has ever written one, and what it goes back to once a
+# written value goes stale. Deliberately not `SensorStatus.OPEN`, which is
+# the name value 4 carries in the physical-sensor status of spec 5.1/5.2:
+# same byte value, different attribute, unrelated meaning.
+WRITTEN_OUTDOOR_STATUS_NO_VALUE = 4
+WRITTEN_OUTDOOR_STATUS_NO_ERROR = 0
+
 COS_SUBSCRIPTION_ATTRIBUTES = [
     attribute_info[0]
     for attribute_info in MAPPING[Action.READ_RESPONSE][FunctionalDomain.STATUS][1]
@@ -114,10 +128,16 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.air_cleaning_mode = 0
         self.air_cleaning_event = 0
 
-        # Written Outdoor Temperature Value (spec 5.4). Defaults to Timed
-        # Out until the automation system writes a value.
-        self.outdoor_sensor_status = SensorStatus.OPEN
+        # Written Outdoor Temperature Value (spec 5.4). Starts out with no
+        # usable value until an automation system writes one, and goes back
+        # to that state if a written value isn't refreshed; see
+        # _write_outdoor_sensor.
+        self.outdoor_sensor_status = WRITTEN_OUTDOOR_STATUS_NO_VALUE
         self.outdoor_sensor_value = 0
+
+        # Pending timer that will mark the written outdoor temperature
+        # stale, or None when there is no written value to expire.
+        self.written_outdoor_timeout_handle: asyncio.TimerHandle | None = None
 
         self.error = ThermostatError.NO_ERROR
 
@@ -322,6 +342,33 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             else AirCleaningStatus.NOT_ACTIVE,
         }
 
+    def _sensors_1_data(self) -> dict:
+        """The full sensor values array (spec 5.1).
+
+        Reports the sensors an 8840 with a return/leaving air kit would
+        have: built-in temperature and humidity plus RAT and LAT, with the
+        wired remote and the wireless outdoor sensors absent so the
+        not-installed status is exercised too.
+        """
+        return {
+            Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS: SensorStatus.NO_ERROR,
+            Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE: 25,
+            Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS: SensorStatus.NOT_INSTALLED,
+            Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE: 0,
+            Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS: SensorStatus.NO_ERROR,
+            Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 20,
+            Attribute.BUILT_IN_HUMIDITY_SENSOR_STATUS: SensorStatus.NO_ERROR,
+            Attribute.BUILT_IN_HUMIDITY_SENSOR_VALUE: 50,
+            Attribute.RAT_SENSOR_STATUS: SensorStatus.NO_ERROR,
+            Attribute.RAT_SENSOR_VALUE: 22.5,
+            Attribute.LAT_SENSOR_STATUS: SensorStatus.NO_ERROR,
+            Attribute.LAT_SENSOR_VALUE: 18.5,
+            Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_STATUS: SensorStatus.NOT_INSTALLED,
+            Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE: 0,
+            Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS: SensorStatus.NOT_INSTALLED,
+            Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE: 0,
+        }
+
     def _sensors_2_data(self) -> dict:
         return {
             Attribute.INDOOR_TEMPERATURE_CONTROLLING_SENSOR_STATUS: SensorStatus.NO_ERROR,
@@ -332,6 +379,13 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             Attribute.INDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 50,
             Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_STATUS: SensorStatus.NO_ERROR,
             Attribute.OUTDOOR_HUMIDITY_CONTROLLING_SENSOR_VALUE: 40,
+        }
+
+    def _sensors_4_data(self) -> dict:
+        """The written outdoor temperature value and its status (spec 5.4)."""
+        return {
+            Attribute.OUTDOOR_SENSOR_STATUS: self.outdoor_sensor_status,
+            Attribute.OUTDOOR_SENSOR: self.outdoor_sensor_value,
         }
 
     def _identification_1_data(self) -> dict:
@@ -719,9 +773,17 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             else:
                 self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.SENSORS:
-            if attribute == 2:
+            if attribute == 1:
+                self._reply(
+                    FunctionalDomain.SENSORS, 1, sequence, self._sensors_1_data()
+                )
+            elif attribute == 2:
                 self._reply(
                     FunctionalDomain.SENSORS, 2, sequence, self._sensors_2_data()
+                )
+            elif attribute == 4:
+                self._reply(
+                    FunctionalDomain.SENSORS, 4, sequence, self._sensors_4_data()
                 )
             else:
                 self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
@@ -987,13 +1049,58 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
 
+    def _cancel_written_outdoor_timeout(self) -> None:
+        """Stop any pending staleness timer for the written outdoor
+        temperature."""
+        if self.written_outdoor_timeout_handle is not None:
+            self.written_outdoor_timeout_handle.cancel()
+            self.written_outdoor_timeout_handle = None
+
+    def _expire_written_outdoor_temperature(self) -> None:
+        """Report the written outdoor temperature as stale (spec 5.4),
+        because it wasn't refreshed in time."""
+        self.written_outdoor_timeout_handle = None
+        self.outdoor_sensor_status = WRITTEN_OUTDOOR_STATUS_NO_VALUE
+
+        _LOGGER.info(
+            "Written outdoor temperature not refreshed within %d seconds",
+            WRITTEN_OUTDOOR_TIMEOUT_SECONDS,
+        )
+
+        if not self.transport:
+            return
+
+        # Unlike the acknowledgement below, this one *is* a change of state,
+        # and byte 23 of the COS Subscriptions mask exists for exactly it -
+        # so a client that turned that channel off shouldn't be told.
+        self._queue_cos(
+            Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,
+            Packet(
+                Action.COS,
+                FunctionalDomain.SENSORS,
+                4,
+                sequence=self._get_sequence(),
+                data=self._sensors_4_data(),
+            ),
+        )
+
     def _write_outdoor_sensor(self, packet: Packet) -> None:
         # spec 5.4: writes always send 0 for the status byte and it should
         # not overwrite the real status - but receiving a fresh value is
-        # exactly what clears a Timed Out condition, so treat it as No Error.
-        self.outdoor_sensor_status = SensorStatus.NO_ERROR
+        # exactly what clears a stale condition, so treat it as No Error.
+        self.outdoor_sensor_status = WRITTEN_OUTDOOR_STATUS_NO_ERROR
         self.outdoor_sensor_value = packet.data.get(Attribute.OUTDOOR_SENSOR)
 
+        # Restart the clock: the value is only good for so long without
+        # another write.
+        self._cancel_written_outdoor_timeout()
+        self.written_outdoor_timeout_handle = asyncio.get_event_loop().call_later(
+            WRITTEN_OUTDOOR_TIMEOUT_SECONDS,
+            self._expire_written_outdoor_temperature,
+        )
+
+        # Acknowledging the write itself isn't what byte 23 subscribes to,
+        # so it goes out regardless of the mask.
         self._queue_cos(
             None,
             Packet(
@@ -1001,10 +1108,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 FunctionalDomain.SENSORS,
                 4,
                 sequence=self._get_sequence(),
-                data={
-                    Attribute.OUTDOOR_SENSOR_STATUS: self.outdoor_sensor_status,
-                    Attribute.OUTDOOR_SENSOR: self.outdoor_sensor_value,
-                },
+                data=self._sensors_4_data(),
             ),
         )
 
@@ -1114,6 +1218,11 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
+
+        # Nothing left to notify, and this protocol instance is done - don't
+        # leave a timer holding a reference to it.
+        self._cancel_written_outdoor_timeout()
+
         self.transport = None
 
 

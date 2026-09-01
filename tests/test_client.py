@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import tracemalloc
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 
@@ -11,6 +11,7 @@ from pyaprilaire.client import (
     DEFAULT_COS_SUBSCRIPTIONS,
     AprilaireClient,
     NackError,
+    UnsupportedAttributeError,
     _AprilaireClientProtocol,
 )
 from pyaprilaire.const import Action, Attribute, FunctionalDomain, NackStatus
@@ -431,6 +432,24 @@ async def test_protocol_read_sensors(protocol: _AprilaireClientProtocol):
     )
 
 
+async def test_protocol_read_sensor_values(protocol: _AprilaireClientProtocol):
+    await protocol.read_sensor_values()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+    )
+
+
+async def test_protocol_read_written_outdoor_temperature(
+    protocol: _AprilaireClientProtocol,
+):
+    await protocol.read_written_outdoor_temperature()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
+    )
+
+
 async def test_protocol_read_control(protocol: _AprilaireClientProtocol):
     await protocol.read_control()
 
@@ -730,6 +749,26 @@ async def test_client_read_sensors(
 
     assertPacketQueueContains(
         protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2)
+    )
+
+
+async def test_client_read_sensor_values(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_sensor_values()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+    )
+
+
+async def test_client_read_written_outdoor_temperature(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    await client.read_written_outdoor_temperature()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
     )
 
 
@@ -1101,11 +1140,12 @@ async def test_client_update_status(
         await client._update_status()
 
     # mac_address, thermostat_status, iaq_status, control,
-    # thermostat_iaq_available, sensors, thermostat_name, scheduling,
+    # thermostat_iaq_available, sensors, sensor_values,
+    # written_outdoor_temperature, thermostat_name, scheduling,
     # configure_cos (a read, then a write because the read returned no
     # current mask), dehumidification_setpoint, humidification_setpoint,
     # sync.
-    assert protocol.packet_queue.qsize() == 13
+    assert protocol.packet_queue.qsize() == 15
     assert sleep_mock.call_count == 1
 
 
@@ -1154,6 +1194,33 @@ async def test_client_set_written_outdoor_temperature_value(
         ),
     )
 
+    # The write is followed by a read, so a caller learns what the
+    # thermostat actually stored rather than assuming the write took.
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4)
+    )
+
+
+async def test_client_set_written_outdoor_temperature_value_half_degree(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """A half degree must reach the packet intact. Rounding belongs to
+    `Packet._encode_temperature`, so this setter must not quantize on its
+    own - doing so is what would make it disagree with `update_setpoint`
+    about a value like 21.3."""
+
+    await client.set_written_outdoor_temperature_value(21.5)
+
+    assertPacketQueueContains(
+        protocol,
+        Packet(
+            Action.WRITE,
+            FunctionalDomain.SENSORS,
+            4,
+            data={Attribute.OUTDOOR_SENSOR_STATUS: 0, Attribute.OUTDOOR_SENSOR: 21.5},
+        ),
+    )
+
 
 async def test_client_read_thermostat_iaq_available(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
@@ -1193,6 +1260,18 @@ async def test_client_read_iaq_status(
             FunctionalDomain.SENSORS,
             2,
             Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 2),
+        ),
+        (
+            "read_sensor_values_and_wait",
+            FunctionalDomain.SENSORS,
+            1,
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1),
+        ),
+        (
+            "read_written_outdoor_temperature_and_wait",
+            FunctionalDomain.SENSORS,
+            4,
+            Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 4),
         ),
         (
             "read_control_and_wait",
@@ -1830,3 +1909,186 @@ async def test_client_data_received_nack_error_not_passed_to_user_callback(
     await client.data_received(FunctionalDomain.CONTROL, 1, nack_error, None)
 
     client.data_received_callback.assert_not_called()
+
+
+# Model-dependent attributes: not every thermostat has RAT/LAT sensors
+# (spec 5.1) or accepts a written outdoor temperature (spec 5.4). One that
+# doesn't answers with a NACK, and `AprilaireClient` is expected to remember
+# that rather than re-ask on every hourly reconnect, and to tell the
+# consuming application so it can hide the corresponding entities. See
+# `UNSUPPORTED_NACK_STATUSES` / `AVAILABILITY_ATTRIBUTES` in client.py.
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN,
+        NackStatus.UNKNOWN_ATTRIBUTE,
+        NackStatus.UNSUPPORTED_MODEL,
+    ],
+)
+async def test_client_unsupported_nack_stops_further_requests(
+    client: AprilaireClient,
+    protocol: _AprilaireClientProtocol,
+    status: NackStatus,
+):
+    await client.data_received(
+        FunctionalDomain.SENSORS, 1, NackError(status, int(status)), 1
+    )
+
+    assert not client.is_attribute_supported(FunctionalDomain.SENSORS, 1)
+
+    with pytest.raises(UnsupportedAttributeError) as exc_info:
+        await client.read_sensor_values()
+
+    # The replayed refusal carries the status of the NACK that proved it,
+    # so a caller can't tell it apart from the device answering again...
+    assert exc_info.value.status == status
+    # ...except that nothing was actually sent.
+    assert protocol.packet_queue.qsize() == 0
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        # Explicitly temporary - the attribute may well work later.
+        NackStatus.ATTRIBUTE_NOT_AVAILABLE_TRY_LATER,
+        # About this request's data, not about the attribute existing.
+        NackStatus.VALUE_OUT_OF_RANGE,
+        # Direction-specific: a write refused as read-only says nothing
+        # about whether the attribute can be read.
+        NackStatus.ATTRIBUTE_READ_ONLY,
+    ],
+)
+async def test_client_other_nacks_do_not_mark_attribute_unsupported(
+    client: AprilaireClient,
+    protocol: _AprilaireClientProtocol,
+    status: NackStatus,
+):
+    await client.data_received(
+        FunctionalDomain.SENSORS, 1, NackError(status, int(status)), 1
+    )
+
+    assert client.is_attribute_supported(FunctionalDomain.SENSORS, 1)
+
+    await client.read_sensor_values()
+
+    assertPacketQueueContains(
+        protocol, Packet(Action.READ_REQUEST, FunctionalDomain.SENSORS, 1)
+    )
+    client.data_received_callback.assert_not_called()
+
+
+async def test_client_unsupported_attribute_error_is_a_nack_error(
+    client: AprilaireClient,
+):
+    """Callers already handling `NackError` need no changes: a replayed
+    refusal is the same failure, just without the round trip."""
+
+    await client.data_received(
+        FunctionalDomain.SENSORS,
+        1,
+        NackError(NackStatus.UNSUPPORTED_MODEL, 0x0A),
+        1,
+    )
+
+    with pytest.raises(NackError):
+        await client.read_sensor_values()
+
+
+async def test_client_unsupported_nack_reports_availability_once(
+    client: AprilaireClient,
+):
+    for _ in range(2):
+        await client.data_received(
+            FunctionalDomain.SENSORS,
+            1,
+            NackError(NackStatus.UNSUPPORTED_MODEL, 0x0A),
+            1,
+        )
+
+    # Reported on the change, not on every NACK for the same attribute.
+    client.data_received_callback.assert_called_once_with(
+        {Attribute.SENSOR_VALUES_AVAILABLE: False}
+    )
+
+
+async def test_client_response_reports_availability_once(client: AprilaireClient):
+    data = {Attribute.RAT_SENSOR_VALUE: 22.5}
+
+    for _ in range(2):
+        await client.data_received(FunctionalDomain.SENSORS, 1, data, 1)
+
+    # The availability report accompanies the first response only; the data
+    # itself is passed on every time.
+    assert client.data_received_callback.call_args_list == [
+        call({Attribute.SENSOR_VALUES_AVAILABLE: True}),
+        call(data),
+        call(data),
+    ]
+
+
+async def test_client_write_gated_by_the_same_cache_as_the_read(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """A device that has no written outdoor temperature attribute has none
+    to write to either, so a NACK from a read must also stop writes - and
+    vice versa."""
+
+    await client.data_received(
+        FunctionalDomain.SENSORS,
+        4,
+        NackError(NackStatus.UNSUPPORTED_MODEL, 0x0A),
+        1,
+    )
+
+    with pytest.raises(UnsupportedAttributeError):
+        await client.set_written_outdoor_temperature_value(21.5)
+
+    assert protocol.packet_queue.qsize() == 0
+
+    client.data_received_callback.assert_called_once_with(
+        {Attribute.WRITTEN_OUTDOOR_TEMPERATURE_AVAILABLE: False}
+    )
+
+
+async def test_client_update_status_skips_unsupported_attributes(
+    client: AprilaireClient, protocol: _AprilaireClientProtocol
+):
+    """An unsupported model must neither be re-probed on each reconnect nor
+    have the rest of its bootstrap aborted by the resulting raise."""
+
+    client.wait_for_response = AsyncMock(return_value=None)
+
+    for attribute in (1, 4):
+        await client.data_received(
+            FunctionalDomain.SENSORS,
+            attribute,
+            NackError(NackStatus.UNSUPPORTED_MODEL, 0x0A),
+            1,
+        )
+
+    with patch("asyncio.sleep", new=AsyncMock()):
+        await client._update_status()
+
+    # The same 13 requests as before these two reads were added.
+    assert protocol.packet_queue.qsize() == 13
+
+
+async def test_client_unsupported_attributes_survive_a_reconnect(
+    client: AprilaireClient,
+):
+    """The cache has to outlive the protocol, since `SocketClient` builds a
+    fresh one for every connection - including the hourly reconnect this
+    exists to stop re-probing."""
+
+    await client.data_received(
+        FunctionalDomain.SENSORS,
+        1,
+        NackError(NackStatus.UNSUPPORTED_MODEL, 0x0A),
+        1,
+    )
+
+    client.protocol = client.create_protocol()
+
+    assert not client.is_attribute_supported(FunctionalDomain.SENSORS, 1)
