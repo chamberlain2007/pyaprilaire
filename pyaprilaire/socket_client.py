@@ -1,7 +1,5 @@
 """Client for connecting to the Aprilaire thermostat socket"""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable
@@ -18,8 +16,8 @@ class SocketClient:
         host: str,
         port: int,
         data_received_callback: Callable[[dict[str, Any]], None],
-        reconnect_interval: int = None,
-        retry_connection_interval: int = None,
+        reconnect_interval: int | None = None,
+        retry_connection_interval: int | None = None,
     ) -> None:
         """Initialize client"""
         self.host = host
@@ -33,9 +31,9 @@ class SocketClient:
         self.reconnecting = False
         self.auto_reconnecting = False
         self.cancelled = False
-        self.reconnect_break_future: asyncio.Future = None
+        self.reconnect_break_future: asyncio.Future | None = None
 
-        self.protocol: asyncio.Protocol = None
+        self.protocol: asyncio.Protocol | None = None
 
     async def _auto_reconnect_loop(self):
         """Wait for cancellable reconnect interval to pass, and perform reconnect"""
@@ -47,7 +45,7 @@ class SocketClient:
                 break
 
             if not self.reconnect_break_future:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 self.reconnect_break_future = loop.create_future()
 
             try:
@@ -55,9 +53,9 @@ class SocketClient:
                     self.reconnect_break_future, self.reconnect_interval
                 )
                 break
-            except asyncio.exceptions.CancelledError:
+            except asyncio.CancelledError:
                 break
-            except asyncio.exceptions.TimeoutError:
+            except TimeoutError:
                 self.auto_reconnecting = True
                 self.state_changed()
 
@@ -68,7 +66,7 @@ class SocketClient:
         if self.reconnect_break_future:
             try:
                 self.reconnect_break_future.set_result(True)
-            except asyncio.exceptions.InvalidStateError:
+            except asyncio.InvalidStateError:
                 pass
             self.reconnect_break_future = None
 
@@ -101,7 +99,7 @@ class SocketClient:
         self.protocol = self.create_protocol()
 
         try:
-            await asyncio.get_event_loop().create_connection(
+            await asyncio.get_running_loop().create_connection(
                 lambda: self.protocol,
                 self.host,
                 self.port,
@@ -132,7 +130,7 @@ class SocketClient:
 
         self.protocol = self.create_protocol()
 
-        await asyncio.get_event_loop().create_connection(
+        await asyncio.get_running_loop().create_connection(
             lambda: self.protocol,
             self.host,
             self.port,

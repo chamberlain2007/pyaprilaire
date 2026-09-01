@@ -1,7 +1,5 @@
 """Utility for testing connection to AprilAire thermostat"""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging

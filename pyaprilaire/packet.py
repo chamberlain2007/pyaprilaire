@@ -1,7 +1,5 @@
 """Functions for handling response data from the thermostat"""
 
-from __future__ import annotations
-
 import math
 from collections.abc import Iterator
 from enum import Enum
@@ -297,8 +295,8 @@ class Packet:
         revision: int = 1,
         sequence: int = 0,
         count: int = 0,
-        data: dict[str, Any] = None,
-        raw_data: list[int] = None,
+        data: dict[str, Any] | None = None,
+        raw_data: list[int] | None = None,
     ):
         self.action = action
         self.functional_domain = functional_domain
