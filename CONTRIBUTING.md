@@ -69,6 +69,24 @@ So:
 
 Commit message bodies are plain text rather than rendered Markdown, so the usual git convention of wrapping the body around 72 columns still applies there.
 
+## Code comments
+
+Code should read without narration. A comment earns its place only when it is one of:
+
+1. A Python docstring on a module, class, or function.
+2. A short note explaining a line that genuinely cannot be understood from the code itself - a magic value taken from the protocol spec, a non-obvious guard, a workaround whose reason is invisible at the call site.
+
+Everything else comes out. In particular, do not write:
+
+- Restatements of what the line already says (`# Ensure already disconnected` above a disconnect call).
+- Design rationale, alternatives considered, or arguments for why the code is shaped the way it is.
+- Change history - "used to", "before #82", "regression fix", pointers to a PR description. Git and the pull request carry that.
+- Section banners and running commentary that narrate a file into chapters.
+
+Keep what survives brief, a line or two. An explanation that needs paragraphs belongs in a docstring, in this file or the README, or in the pull request description - not in a comment block.
+
+Docstrings follow the same brevity rule: state what the thing is or does, its parameters, what it returns, and what it raises - not why the implementation was chosen. This applies to tests as much as to library code.
+
 ## Linting
 
 This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting, and [pre-commit](https://pre-commit.com/) to run checks automatically. After installing the `dev` extra (`pip install -e .[dev]`), enable the hooks with:
