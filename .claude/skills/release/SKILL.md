@@ -137,23 +137,66 @@ the last rc*, not the whole release again:
 - **rc0**: notes should cover everything since the last real, published release.
   Find the previous final tag with
   `gh release list --exclude-drafts --exclude-pre-releases --limit 1`. If there
-  isn't one (first-ever release), omit `--notes-start-tag` and let notes cover the
+  isn't one (first-ever release), omit `previous_tag_name` and let notes cover the
   full history.
 - **rc1 and later**: notes should start from the *previous rc tag of this same
   release* (e.g. rc2's notes start at rc1), so only newly merged PRs show up.
+
+Build the notes body using the process in "Release notes format" below, then create
+the release with the composed file instead of `--generate-notes`:
 
 ```bash
 gh release create X.Y.Zrc<N> \
   --target release/X.Y.Z \
   --title "X.Y.Zrc<N>" \
   --draft --prerelease \
-  --generate-notes \
-  --notes-start-tag <previous-tag>   # omit entirely if there is no previous tag
+  --notes-file /tmp/release-notes.md
 ```
 
 `--draft` means nothing publishes or fires the PyPI workflow yet — it's just
 visible in the repo's Releases tab for review. Report the PR link and the draft
 release link back to the user; that's the deliverable for this phase.
+
+## Release notes format
+
+Both rc and final releases use the same two-part shape — a narrative paragraph
+first, then the mechanical PR list — rather than a bare auto-generated list:
+
+1. **A short narrative paragraph.** One paragraph, prose, no bullets: describe what
+   the release actually does for someone using the library (new device support, a
+   protocol fix, an API change), grouped by theme rather than restating each PR
+   title in order. Base it on the PR titles (and, for anything whose title alone
+   doesn't explain the "why," a quick `gh pr view <number>` to check the body) —
+   don't pad it with filler like "this release contains various improvements."
+2. **A bulleted list of the PRs**, each formatted exactly like GitHub's own
+   changelog entries: `<PR title> by @<author> in #<number>`.
+
+Get part 2 for free from GitHub's notes generator instead of composing it by hand —
+it already produces exactly this format — and only write part 1 yourself:
+
+```bash
+gh api repos/chamberlain2007/pyaprilaire/releases/generate-notes \
+  -f tag_name=<tag> \
+  -f target_commitish=<branch> \
+  -f previous_tag_name=<previous-tag> \
+  --jq .body
+```
+
+(omit `-f previous_tag_name=...` entirely if there is no previous tag). This
+returns a `## What's Changed` section with one `* <title> by @<author> in #<number>`
+line per merged PR, plus a `**Full Changelog**` compare link. Read those PR titles,
+write your narrative paragraph, then assemble the final file:
+
+```
+<your narrative paragraph>
+
+<the body returned by generate-notes, unchanged>
+```
+
+Save that to `/tmp/release-notes.md` and pass it via `--notes-file` when creating
+the release (both here and in Phase 2). Don't hand-roll the bullet list yourself —
+reusing GitHub's generated one keeps author handles, PR numbers, and link
+formatting exactly right.
 
 ## Phase 2: Run release
 
@@ -194,15 +237,19 @@ git push origin X.Y.Z
 ```
 
 Create the release as a draft first, then publish it as an explicit, confirmed
-second action — publishing is the point of no return (fires the real-PyPI upload):
+second action — publishing is the point of no return (fires the real-PyPI upload).
+Build the notes the same way as in "Release notes format" above — narrative
+paragraph plus the generated PR list — using `previous_tag_name` set to the
+previous *final* release tag (omit it if this is the first release ever), not any
+of this release's own rc tags, so the final notes summarize the whole release
+rather than just the last rc's delta:
 
 ```bash
 gh release create X.Y.Z \
   --target main \
   --title "X.Y.Z" \
   --draft \
-  --generate-notes \
-  --notes-start-tag <previous-final-release-tag>   # omit if this is the first release
+  --notes-file /tmp/release-notes.md
 ```
 
 Read the draft back to the user (or point them at its URL) and confirm they want it
@@ -224,9 +271,9 @@ looks good (`gh run list --workflow python-publish.yml --limit 1`).
 - **bumpver refuses to bump ("invariant violated")**: usually means the local repo
   is missing a tag that exists on the remote, or vice versa. Run `git fetch --tags
   origin` and retry; bumpver cross-checks `pyproject.toml` against VCS tags.
-- **No prior release for `--notes-start-tag`**: this is normal for the very first
+- **No prior release for `previous_tag_name`**: this is normal for the very first
   release ever cut, or the first rc of a release where nothing has been tagged yet
-  — just omit the flag.
+  — just omit that parameter when calling `generate-notes`.
 - **User asks for another rc without giving a version**: that's expected and fine —
   reuse the version from the existing `release/X.Y.Z` branch name (or the current
   `pyproject.toml` version on that branch) rather than asking them to repeat it.
