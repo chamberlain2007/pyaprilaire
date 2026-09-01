@@ -35,15 +35,19 @@ class CustomFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-_LOGGER = logging.getLogger("aprilaire.mock_server")
-_LOGGER.setLevel(logging.DEBUG)
-
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 
 ch.setFormatter(CustomFormatter())
 
-_LOGGER.addHandler(ch)
+# The library logs through the standard `pyaprilaire.*` loggers rather than
+# one handed to it, so this utility gets the client's own output by
+# configuring the package logger - and its own messages by logging under it.
+_PACKAGE_LOGGER = logging.getLogger(__package__)
+_PACKAGE_LOGGER.setLevel(logging.DEBUG)
+_PACKAGE_LOGGER.addHandler(ch)
+
+_LOGGER = logging.getLogger(__name__)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -61,7 +65,6 @@ if __name__ == "__main__":
         args.host,
         args.port,
         data_received_callback=data_received_callback,
-        logger=_LOGGER,
     )
 
     try:

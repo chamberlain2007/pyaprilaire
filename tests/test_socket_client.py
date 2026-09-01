@@ -10,16 +10,8 @@ from pyaprilaire.client import SocketClient
 
 
 @pytest.fixture
-def logger():
-    logger = logging.getLogger()
-    logger.propagate = False
-
-    return logger
-
-
-@pytest.fixture
-def client(logger):
-    return SocketClient(None, None, None, logger)
+def client():
+    return SocketClient(None, None, None)
 
 
 def patch_socket(func):
@@ -288,4 +280,23 @@ async def test_reconnect_once(client: SocketClient):
 
     assert client.connected
     assert not client.reconnecting
+    assert not client.auto_reconnecting
+
+
+def test_connection_established_logged(client: SocketClient, caplog):
+    with caplog.at_level(logging.INFO, logger="pyaprilaire.socket_client"):
+        client._connection_established()
+
+    assert "Aprilaire connection made" in caplog.text
+    assert client.connected
+
+
+def test_connection_established_silent_for_auto_reconnect(client: SocketClient, caplog):
+    client.auto_reconnecting = True
+
+    with caplog.at_level(logging.INFO, logger="pyaprilaire.socket_client"):
+        client._connection_established()
+
+    assert "Aprilaire connection made" not in caplog.text
+    assert client.connected
     assert not client.auto_reconnecting

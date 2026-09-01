@@ -23,26 +23,18 @@ tracemalloc.start()
 
 
 @pytest.fixture
-def logger():
-    logger = logging.getLogger()
-    logger.propagate = False
-
-    return logger
-
-
-@pytest.fixture
-def protocol(event_loop, logger):
+def protocol(event_loop):
     data_received_callback = AsyncMock()
     reconnect_action = AsyncMock()
 
-    return _AprilaireClientProtocol(data_received_callback, logger, reconnect_action)
+    return _AprilaireClientProtocol(data_received_callback, reconnect_action)
 
 
 @pytest.fixture
-def client(event_loop, logger, protocol):
+def client(event_loop, protocol):
     data_received_callback = Mock()
 
-    client = AprilaireClient(None, None, data_received_callback, logger, 10, 10)
+    client = AprilaireClient(None, None, data_received_callback, 10, 10)
 
     client.protocol = protocol
 
@@ -350,11 +342,11 @@ def test_protocol_mode_re_read(protocol: _AprilaireClientProtocol):
     assert protocol.read_control.call_count == 1
 
 
-def test_protocol_connection_lost_without_reconnect_action(logger):
+def test_protocol_connection_lost_without_reconnect_action():
     # reconnect_action is optional in the same way connected_action is -
     # losing the connection without one must still notify the callback
     # rather than raising.
-    protocol = _AprilaireClientProtocol(AsyncMock(), logger)
+    protocol = _AprilaireClientProtocol(AsyncMock())
 
     assert protocol.reconnect_action is None
 
@@ -2218,3 +2210,29 @@ async def test_client_unsupported_attributes_survive_a_reconnect(
     client.protocol = client.create_protocol()
 
     assert not client.is_attribute_supported(FunctionalDomain.SENSORS, 1)
+
+
+async def test_reconnect_with_delay_logs_connection_lost(
+    client: AprilaireClient, caplog
+):
+    with (
+        patch("pyaprilaire.socket_client.SocketClient._reconnect", new=AsyncMock()),
+        caplog.at_level(logging.INFO, logger="pyaprilaire.client"),
+    ):
+        await client._reconnect_with_delay()
+
+    assert "Aprilaire connection lost" in caplog.text
+
+
+async def test_reconnect_with_delay_silent_for_auto_reconnect(
+    client: AprilaireClient, caplog
+):
+    client.auto_reconnecting = True
+
+    with (
+        patch("pyaprilaire.socket_client.SocketClient._reconnect", new=AsyncMock()),
+        caplog.at_level(logging.INFO, logger="pyaprilaire.client"),
+    ):
+        await client._reconnect_with_delay()
+
+    assert "Aprilaire connection lost" not in caplog.text
