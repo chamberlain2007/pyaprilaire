@@ -1979,6 +1979,64 @@ async def test_client_other_nacks_do_not_mark_attribute_unsupported(
     client.data_received_callback.assert_not_called()
 
 
+async def test_client_discovering_nack_raises_unsupported_attribute_error(
+    client: AprilaireClient,
+):
+    """The NACK that discovers an attribute is missing must fail the
+    pending wait with the same type as every cached refusal after it -
+    otherwise `except UnsupportedAttributeError` silently misses the one
+    call that found out."""
+
+    sequence = await client.read_sensor_values()
+
+    async def nack_it():
+        await client.data_received(
+            FunctionalDomain.SENSORS,
+            1,
+            NackError(NackStatus.UNSUPPORTED_MODEL, 0x0A),
+            sequence,
+        )
+
+    asyncio.ensure_future(nack_it())
+
+    with pytest.raises(UnsupportedAttributeError) as exc_info:
+        await client.wait_for_response(
+            FunctionalDomain.SENSORS, 1, 5, sequence=sequence
+        )
+
+    assert exc_info.value.status == NackStatus.UNSUPPORTED_MODEL
+
+    # And the cache holds the same type, so it is what a later call raises
+    # as well.
+    assert isinstance(
+        client.unsupported_attributes[(FunctionalDomain.SENSORS, 1)],
+        UnsupportedAttributeError,
+    )
+
+
+async def test_client_discovering_nack_of_other_status_stays_a_nack_error(
+    client: AprilaireClient,
+):
+    """Only the statuses that prove the attribute missing get upgraded; an
+    ordinary terminal NACK is still reported as-is, by identity."""
+
+    nack_error = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
+
+    sequence = await client.read_sensor_values()
+
+    async def nack_it():
+        await client.data_received(FunctionalDomain.SENSORS, 1, nack_error, sequence)
+
+    asyncio.ensure_future(nack_it())
+
+    with pytest.raises(NackError) as exc_info:
+        await client.wait_for_response(
+            FunctionalDomain.SENSORS, 1, 5, sequence=sequence
+        )
+
+    assert exc_info.value is nack_error
+
+
 async def test_client_unsupported_attribute_error_is_a_nack_error(
     client: AprilaireClient,
 ):

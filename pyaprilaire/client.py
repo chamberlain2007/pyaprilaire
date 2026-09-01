@@ -106,11 +106,14 @@ class UnsupportedAttributeError(NackError):
     remembers those attributes and raises this instead of putting the
     request on the wire.
 
-    It subclasses `NackError`, carrying the status of the NACK that
-    originally proved the point, because it *is* that same failure - just
-    reported without another round trip. A caller handling `NackError`
-    therefore needs no changes, while one that cares can tell a replayed
-    refusal from a fresh one. Note this is raised rather than signalled by
+    The NACK that proves the point raises this as well, rather than a plain
+    `NackError`: the attribute is just as unsupported on the call that
+    discovers it as on every call after, so catching this type must not
+    depend on whether the answer came from the device or from the cache.
+
+    It subclasses `NackError`, carrying the status of the NACK behind it,
+    because it *is* that same failure. A caller handling `NackError`
+    therefore needs no changes. Note this is raised rather than signalled by
     returning `None`: `None` already means "timed out" (see
     `wait_for_response`), which is the opposite situation - a timed-out
     request may still succeed on a retry, an unsupported one never will.
@@ -960,7 +963,15 @@ class AprilaireClient(SocketClient):
         is_nack_error = isinstance(data, NackError)
 
         if is_nack_error:
-            self._record_unsupported_attribute(functional_domain, attribute, data)
+            # A NACK that proves the attribute unsupported fails this
+            # request as `UnsupportedAttributeError` too, not just every
+            # later one - otherwise the single call that discovers the
+            # attribute is missing raises a different type from all the
+            # calls after it, and a caller catching the subclass silently
+            # misses the discovery.
+            data = self._record_unsupported_attribute(
+                functional_domain, attribute, data
+            )
         else:
             # Anything at all coming back for one of these attributes - a
             # read response or an unsolicited COS - proves the thermostat
@@ -1016,7 +1027,7 @@ class AprilaireClient(SocketClient):
         functional_domain: FunctionalDomain,
         attribute: int,
         nack_error: NackError,
-    ) -> None:
+    ) -> NackError:
         """Remember an attribute a terminal NACK proved this device doesn't
         implement, so it is never requested again.
 
@@ -1024,9 +1035,16 @@ class AprilaireClient(SocketClient):
         the device; every other NACK is about this one request and leaves
         the attribute's support unknown, so it is logged by the protocol and
         otherwise ignored here.
+
+        Returns the error that should fail this request's pending
+        `wait_for_response`: `nack_error` unchanged, or an
+        `UnsupportedAttributeError` carrying the same status when this NACK
+        is the one that proved the attribute unsupported - so that the
+        discovering call and every cached refusal after it raise the same
+        type.
         """
         if nack_error.status not in UNSUPPORTED_NACK_STATUSES:
-            return
+            return nack_error
 
         key = (functional_domain, attribute)
 
@@ -1039,9 +1057,15 @@ class AprilaireClient(SocketClient):
                 nack_error.status.name,
             )
 
-        self.unsupported_attributes[key] = nack_error
+        unsupported_error = UnsupportedAttributeError(
+            nack_error.status, nack_error.raw_status
+        )
+
+        self.unsupported_attributes[key] = unsupported_error
 
         self._set_availability(functional_domain, attribute, False)
+
+        return unsupported_error
 
     def _set_availability(
         self,
