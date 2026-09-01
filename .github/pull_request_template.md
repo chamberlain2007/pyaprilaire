@@ -11,7 +11,7 @@ Markdown to the reader's width. See CONTRIBUTING.md.
 
 ## Summary
 
-<!-- What does this PR do, and why? -->
+<!-- What does this PR do, and why? One or two paragraphs - leave the detail to the diff. -->
 
 ## Type of change
 
@@ -41,7 +41,7 @@ None
 
 ## Testing
 
-<!-- How was this verified? e.g. `pytest`, manual testing against a thermostat/mock server -->
+<!-- A line or two: what you ran and what it showed. e.g. `pytest`, manual testing against a thermostat/mock server -->
 
 ## Checklist
 

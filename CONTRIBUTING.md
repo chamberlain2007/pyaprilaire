@@ -55,6 +55,8 @@ Concretely, that means:
 - Replace the `<!-- ... -->` prompts with real content. They are instructions for the author, not text to keep - a merged PR body should contain no leftover template comments.
 - Keep the checklist, and tick a box only when the thing is actually true. Leave the rest unticked rather than removing them.
 - In "Type of change", delete the entries that do not apply, leaving the one (or few) that do.
+- Keep "Summary" to one or two paragraphs: what changed and why, enough for a reviewer to approach the diff. The detail belongs in the diff, the commit messages, and the review discussion - a description that recounts the whole change is one nobody reads.
+- Keep "Testing" to a line or two naming what you ran and what it showed.
 
 ### Formatting PR descriptions and comments
 
@@ -66,6 +68,8 @@ So:
 - Separate paragraphs with a blank line. That blank line is what makes a new paragraph - a single newline inside a paragraph is not a paragraph break, and a trailing double space to force a `<br>` is not one either.
 - Use real Markdown structure for structure: headings, `-` lists, numbered lists, tables, fenced code blocks. Do not fake a list or a table by breaking lines by hand.
 - Line breaks are still correct inside fenced code blocks, and each list item is still its own line - the rule above is about prose, not about literal content.
+
+These rules govern how prose is written, not how much of it to write. A paragraph that runs as one long line is still a paragraph you have to justify - see the length limits above.
 
 Commit message bodies are plain text rather than rendered Markdown, so the usual git convention of wrapping the body around 72 columns still applies there.
 
