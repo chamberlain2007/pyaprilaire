@@ -7,7 +7,7 @@ name = "pyaprilaire"
 version = "0.10.0rc0"
 readme = "README.md"
 dependencies = [
-    "crc >= 4"
+    "crc >= 7.1.0"
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",

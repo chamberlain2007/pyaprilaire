@@ -28,6 +28,10 @@ Common types:
 
 A breaking change is indicated with a `!` after the type/scope (e.g. `feat!: change socket API`) and/or a `BREAKING CHANGE:` footer.
 
+For a breaking change, **put the `!` in the pull request title**, not only on a commit inside the branch. Pull requests are squash-merged, so the PR title becomes the commit subject on `develop` and is what GitHub's release notes are built from. A `!` that appears only on an inner commit ends up buried in the squash body, where the changelog will not show it - which is what happened with [#79](https://github.com/chamberlain2007/pyaprilaire/pull/79), a real breaking change whose PR title carried no marker.
+
+When a change breaks downstream code, also include a `BREAKING CHANGE:` footer describing what breaks and what to do about it. That text is quoted verbatim into the release notes as the migration note, so write it for someone upgrading.
+
 Examples:
 
 ```

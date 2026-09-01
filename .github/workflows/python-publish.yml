@@ -1,4 +1,4 @@
-# This workflow will upload a Python Package using Twine when a release is created
+# This workflow will upload a Python Package using Twine when a release is published
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python#publishing-to-package-registries
 
 # This workflow uses actions that are not certified by GitHub.
@@ -8,9 +8,14 @@
 
 name: Upload Python Package
 
+# Only "published" - a draft release fires nothing, which is what makes the
+# draft-review step in the release skill safe. "edited" is deliberately absent:
+# publishing a draft already fires "published", so including it would only re-run
+# the upload whenever release notes are edited afterwards, which PyPI rejects as a
+# duplicate filename.
 on:
   release:
-    types: [published, edited]
+    types: [published]
 
 permissions:
   contents: read
@@ -32,16 +37,11 @@ jobs:
         pip install build
     - name: Build package
       run: python -m build
-    - name: Publish package (release)
-      if: "!github.event.release.prerelease"
+    # Release candidates go to PyPI too, marked as a GitHub prerelease. A PEP 440
+    # pre-release version (0.10.0rc0) is invisible to `pip install pyaprilaire` -
+    # pip only resolves it when asked explicitly (==0.10.0rc0 or --pre).
+    - name: Publish package
       uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
       with:
         user: __token__
         password: ${{ secrets.PYPI_API_TOKEN }}
-    - name: Publish package (prerelease)
-      if: "github.event.release.prerelease"
-      uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
-      with:
-        user: __token__
-        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        repository_url: https://test.pypi.org/legacy/
