@@ -29,31 +29,22 @@ from .const import (
 )
 from .packet import MAPPING, NackPacket, Packet
 
-# The COS Subscriptions channels (spec 7.1), in wire order, taken straight
-# from packet.py's schema for STATUS 0x01 so the mock's mask can never drift
-# out of step with what the parser produces. Byte 21 is Reserved and appears
-# here as None: it has no attribute name, is never subscribable, and only
-# occupies its structurally-required place in the message.
-# How long a temporary hold (spec 3.4) created by a setpoint write lasts.
-# Real hardware ends one at the next scheduled transition; the mock has no
-# schedule, so it picks a fixed duration and reports the resulting end time
-# rather than leaving the hold end fields at a meaningless zero.
+# Real hardware ends a temporary hold (spec 3.4) at the next scheduled
+# transition; the mock has no schedule, so it uses a fixed duration.
 TEMPORARY_HOLD_HOURS = 2
 
-# Spec 5.4: a written outdoor temperature has to be refreshed more often
-# than every ten minutes, or the thermostat stops trusting it. This is how
-# long the mock waits after a write before reporting the value as stale.
+# Spec 5.4: a written outdoor temperature goes stale unless refreshed more
+# often than every ten minutes.
 WRITTEN_OUTDOOR_TIMEOUT_SECONDS = 600
 
-# Spec 5.4's status byte for the Written Outdoor Temperature Value. Value 4
-# there is the "no usable value" state - what the thermostat reports before
-# an automation system has ever written one, and what it goes back to once a
-# written value goes stale. Deliberately not `SensorStatus.OPEN`, which is
-# the name value 4 carries in the physical-sensor status of spec 5.1/5.2:
-# same byte value, different attribute, unrelated meaning.
+# Spec 5.4's status byte for the Written Outdoor Temperature Value. Not
+# `SensorStatus`, which gives value 4 an unrelated meaning in spec 5.1/5.2.
 WRITTEN_OUTDOOR_STATUS_NO_VALUE = 4
 WRITTEN_OUTDOOR_STATUS_NO_ERROR = 0
 
+# The COS Subscriptions channels (spec 7.1) in wire order, taken from
+# packet.py so the mock's mask cannot drift from what the parser produces.
+# Byte 21 is Reserved and appears here as None.
 COS_SUBSCRIPTION_ATTRIBUTES = [
     attribute_info[0]
     for attribute_info in MAPPING[Action.READ_RESPONSE][FunctionalDomain.STATUS][1]
@@ -115,8 +106,6 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.heat_setpoint = 20
         self.hold = HoldType.DISABLED
 
-        # When the current temporary hold ends; None whenever no hold is
-        # active. See _start_temporary_hold / _scheduling_4_data.
         self.hold_end: datetime | None = None
 
         self.dehumidification_status = DehumidificationStatus.NOT_ACTIVE
@@ -128,32 +117,23 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.air_cleaning_mode = 0
         self.air_cleaning_event = 0
 
-        # Written Outdoor Temperature Value (spec 5.4). Starts out with no
-        # usable value until an automation system writes one, and goes back
-        # to that state if a written value isn't refreshed; see
-        # _write_outdoor_sensor.
+        # Written Outdoor Temperature Value (spec 5.4), with no usable value
+        # until an automation system writes one.
         self.outdoor_sensor_status = WRITTEN_OUTDOOR_STATUS_NO_VALUE
         self.outdoor_sensor_value = 0
 
-        # Pending timer that will mark the written outdoor temperature
-        # stale, or None when there is no written value to expire.
         self.written_outdoor_timeout_handle: asyncio.TimerHandle | None = None
 
         self.error = ThermostatError.NO_ERROR
 
-        # 8840 (spec 8.1) - the mock also serves dehumidification,
-        # humidification, fresh air and thermostat-name, all of which the
-        # spec marks "except 8810", so 8810 would be an inconsistent choice.
+        # 8840 (spec 8.1), which supports everything this mock serves.
         self.model_number = 7
 
         self.name = "Mock"
         self.location = "02134"
         self.mac_address = [1, 2, 3, 4, 5, 6]
 
-        # All COS subscription outputs are enabled by default (spec 7.1). A
-        # WRITE to STATUS 0x01 (COS Subscriptions) overwrites this mask, and
-        # a READ reports it back; see _configure_cos / _status_1_data /
-        # _queue_cos.
+        # All COS subscription outputs are enabled by default (spec 7.1).
         self.cos_mask = {
             attribute: 1
             for attribute in COS_SUBSCRIPTION_ATTRIBUTES
@@ -162,22 +142,17 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         self.packet_queue = asyncio.Queue()
 
-        # Bytes received but not yet forming a complete frame; see
-        # data_received.
         self.receive_buffer = bytearray()
 
-        # Messages sent by the Thermostat use sequence numbers 128-255
-        # (spec F, note 1). Starting at 127 makes the first _get_sequence()
-        # call return 128.
+        # Spec F note 1: thermostat messages use sequence numbers 128-255,
+        # so the first _get_sequence() call must return 128.
         self.sequence = 127
 
     def _get_sequence(self) -> int:
         """Get and increment the current sequence number.
 
-        Only used for messages the mock originates on its own (COS, or the
-        sync burst) - read responses and NACKs instead echo the sequence of
-        the request that triggered them, per spec F note 2, via _reply and
-        _send_nack.
+        Only for messages the mock originates itself; per spec F note 2,
+        responses echo the sequence of the request that triggered them.
         """
         self.sequence = 128 + ((self.sequence + 1) % 128)
 
@@ -189,9 +164,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def _queue_cos(self, channel: Attribute | None, packet: Packet) -> None:
         """Queue a COS packet if its COS Subscriptions channel is enabled.
 
-        channel=None means the message is always sent regardless of
-        subscription state (e.g. Sync complete and Thermostat Error, which
-        spec 7.2 calls out as always being part of a sync).
+        A `channel` of None sends the message regardless of subscription
+        state, as spec 7.2 requires for the messages that make up a sync.
         """
         if channel is not None and not self._cos_enabled(channel):
             return
@@ -220,39 +194,25 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             )
         )
 
-    # -- Shared attribute payloads, kept in one place so every code path
-    # (reads, COS, sync burst) reports the same state. --
-
     def _setup_1_data(self) -> dict:
         """Thermostat Installer Settings (spec 1.1).
 
-        Only the fields packet.py maps are reported; the rest of the
-        message is the structural padding Packet.serialize emits for an
-        unmapped byte. Control Setup and Program Format are mapped but
-        deliberately absent: this mock models neither, and inventing a value
-        for them would be the kind of self-contradictory state the rest of
-        these helpers exist to avoid.
+        Only the fields packet.py maps are reported, minus Control Setup and
+        Program Format, which this mock does not model.
         """
         return {
-            # The setpoints below are Celsius - the protocol's temperature
-            # encoding tops out at 63, which a Fahrenheit setpoint would
-            # exceed - so reporting Fahrenheit here would contradict every
-            # temperature this mock sends.
+            # The protocol's temperature encoding tops out at 63, which a
+            # Fahrenheit setpoint would exceed.
             Attribute.TEMPERATURE_SCALE: TemperatureScale.CELSIUS,
             # The mock's default mode is Auto, which needs auto changeover
             # enabled and a deadband between the two setpoints.
             Attribute.AUTO_CHANGEOVER: 1,
             Attribute.DEADBAND: 2,
-            # No remote, outdoor or return air sensor: the outdoor
-            # temperature this mock serves is the *written* value of spec
-            # 5.4, which is what an automation system supplies precisely
-            # when no outdoor sensor is installed.
+            # No sensors installed: the outdoor temperature this mock serves
+            # is the written value of spec 5.4.
             Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED: 0,
             Attribute.OUTDOOR_SENSOR_INSTALLED: 0,
             Attribute.RETURN_AIR_SENSOR_INSTALLED: 0,
-            # Heat blast and progressive recovery aren't modeled, and
-            # STATUS 0x06 accordingly always reports progressive recovery
-            # as inactive.
             Attribute.HEAT_BLAST_AVAILABLE: 0,
             Attribute.PROGRESSIVE_RECOVERY_AVAILABLE: 0,
             Attribute.AWAY_AVAILABLE: 1,
@@ -261,11 +221,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def _scheduling_4_data(self) -> dict:
         """Schedule Hold (spec 3.4).
 
-        The held fan mode and setpoints are the ones the hold is holding -
-        i.e. the mock's current state - so they can't contradict what
-        CONTROL 0x01 and CONTROL 0x03 report. With no hold active there is
-        nothing being held: every field but the hold type is sent as NULL
-        (spec section G).
+        The held fan mode and setpoints are the mock's current state. With no
+        hold active, every field but the hold type is NULL (spec section G).
         """
         if self.hold == HoldType.DISABLED:
             return {Attribute.HOLD: self.hold}
@@ -345,10 +302,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def _sensors_1_data(self) -> dict:
         """The full sensor values array (spec 5.1).
 
-        Reports the sensors an 8840 with a return/leaving air kit would
-        have: built-in temperature and humidity plus RAT and LAT, with the
-        wired remote and the wireless outdoor sensors absent so the
-        not-installed status is exercised too.
+        Reports the sensors of an 8840 with a return/leaving air kit, leaving
+        the wired remote and wireless outdoor sensors absent.
         """
         return {
             Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS: SensorStatus.NO_ERROR,
@@ -401,9 +356,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
     async def _send_sync_burst(self) -> None:
         """Send every COS-subscribed message, then the Thermostat Error
-        status, then finally the Sync-complete COS (spec 7.2): "used to
-        prompt the Thermostat to send all COS subscribed messages, the
-        Thermostat Error Status message, and COS Sync complete message."
+        status, then the Sync-complete COS, in the order of spec 7.2.
         """
 
         self._queue_cos(
@@ -545,7 +498,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             ),
         )
 
-        # Always sent as part of a sync, regardless of subscription state.
+        # Sent as part of a sync regardless of subscription state.
         self._queue_cos(
             None,
             Packet(
@@ -590,9 +543,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             except asyncio.QueueEmpty:
                 pass
             except Exception:
-                # A real device wouldn't drop the connection because one
-                # outgoing packet was bad - log it and keep the loop (and
-                # therefore the connection) alive.
+                # A bad outgoing packet must not take the connection down.
                 _LOGGER.exception("Unexpected error in queue loop")
 
             await asyncio.sleep(QUEUE_FREQUENCY)
@@ -602,8 +553,6 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         self.transport = transport
 
-        # A fresh connection must not inherit a partial frame left over
-        # from whatever connection preceded it.
         self.receive_buffer = bytearray()
 
         asyncio.ensure_future(self._queue_loop())
@@ -611,13 +560,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def _configure_cos(self, packet: Packet) -> None:
         """Handle a WRITE to STATUS 0x01 (COS Subscriptions, spec 7.1).
 
-        Every channel the client omits keeps its current value: spec section
-        G defines a NULL (0) byte in a write as "leave this field
-        unmodified", and Packet.parse reports those bytes as a 0 rather than
-        dropping them, so an explicit 0 from the client (disable this
-        channel) is indistinguishable from an omission at this layer. The
-        client always writes the complete 29-byte mask, which is the case
-        that matters here.
+        A channel the client omits keeps its current value, since spec
+        section G's NULL byte is indistinguishable here from an explicit 0.
         """
         self.cos_mask.update(
             {
@@ -640,29 +584,16 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def _status_1_data(self) -> dict:
         """The current COS Subscriptions mask (spec 7.1), as reported by a
         read of STATUS 0x01.
-
-        client.py's configure_cos() reads this before deciding whether a
-        write is warranted at all, so an unanswered read here costs the
-        client its read timeout on every connect and then makes it write the
-        mask unconditionally.
         """
         return dict(self.cos_mask)
 
     def _prescan_raw_frames(self, data: bytes) -> None:
-        """Walk the raw frame stream the same way Packet.parse() does, to
-        catch frames it silently drops before they ever become a Packet the
-        rest of this class can see: an unrecognized action (NACK 0x05), an
-        unrecognized or unsupported functional domain (0x06), or an
-        attribute this action/domain doesn't define (0x07) - spec H.5: "A
-        NAck is sent in response to any unhandled, corrupt, or
-        un-parse-able action received with a suitable status code."
+        """Walk the raw frame stream to catch the frames Packet.parse()
+        silently drops, so they can be NACKed per spec H.5.
 
-        NOTE: this necessarily duplicates a small amount of Packet.parse()'s
-        header-walking logic (revision/sequence/count/action/domain/
-        attribute + CRC). It intentionally stays out of packet.py, which is
-        outside this change's scope; see the PR description for the
-        packet.py-side fix this should eventually be replaced by (yielding
-        an "unparseable" marker instead of silently dropping the frame).
+        Sends a NACK for an unrecognized action (0x05), an unrecognized
+        functional domain (0x06), or an attribute that action/domain does
+        not define (0x07).
         """
         index = 0
 
@@ -829,10 +760,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                     {Attribute.MAC_ADDRESS: self.mac_address},
                 )
             elif attribute == 4 or attribute == 5:
-                # Echo whichever attribute was requested - the client
-                # correlates responses by (domain, attribute), so replying
-                # to a 0x05 request with 0x04 (as this mock used to)
-                # resolves against the wrong key.
+                # The client correlates responses by (domain, attribute), so
+                # the requested attribute has to be echoed back.
                 self._reply(
                     FunctionalDomain.IDENTIFICATION,
                     attribute,
@@ -852,8 +781,6 @@ class _AprilaireServerProtocol(asyncio.Protocol):
             self.hold = HoldType.DISABLED
             self.hold_end = None
 
-        # When the current temporary hold ends; None whenever no hold is
-        # active. See _start_temporary_hold / _scheduling_4_data.
         self.hold_end: datetime | None = None
 
         if Attribute.FAN_MODE in data:
@@ -1070,9 +997,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         if not self.transport:
             return
 
-        # Unlike the acknowledgement below, this one *is* a change of state,
-        # and byte 23 of the COS Subscriptions mask exists for exactly it -
-        # so a client that turned that channel off shouldn't be told.
+        # A change of state, so byte 23 of the COS mask gates it.
         self._queue_cos(
             Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,
             Packet(
@@ -1085,22 +1010,19 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         )
 
     def _write_outdoor_sensor(self, packet: Packet) -> None:
-        # spec 5.4: writes always send 0 for the status byte and it should
-        # not overwrite the real status - but receiving a fresh value is
-        # exactly what clears a stale condition, so treat it as No Error.
+        # Spec 5.4 sends 0 for the status byte on a write, but a fresh value
+        # is what clears a stale condition.
         self.outdoor_sensor_status = WRITTEN_OUTDOOR_STATUS_NO_ERROR
         self.outdoor_sensor_value = packet.data.get(Attribute.OUTDOOR_SENSOR)
 
-        # Restart the clock: the value is only good for so long without
-        # another write.
         self._cancel_written_outdoor_timeout()
         self.written_outdoor_timeout_handle = asyncio.get_event_loop().call_later(
             WRITTEN_OUTDOOR_TIMEOUT_SECONDS,
             self._expire_written_outdoor_temperature,
         )
 
-        # Acknowledging the write itself isn't what byte 23 subscribes to,
-        # so it goes out regardless of the mask.
+        # An acknowledgement rather than a change of state, so byte 23 of the
+        # COS mask does not gate it.
         self._queue_cos(
             None,
             Packet(
@@ -1126,10 +1048,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         sequence = packet.sequence
 
         if domain == FunctionalDomain.SETUP:
-            # Installer settings are spec-legal writes, but nothing in
-            # client.py writes them and this mock doesn't model changing
-            # them, so they're refused the same way as any other attribute
-            # it can't act on.
+            # Spec-legal writes, but this mock does not model changing them.
             self._send_nack(NackStatus.UNKNOWN_ATTRIBUTE, sequence)
         elif domain == FunctionalDomain.CONTROL:
             if attribute == 1:
@@ -1183,12 +1102,8 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def data_received(self, data: bytes) -> None:
         _LOGGER.info("Received data: %s", data.hex(" ", 1))
 
-        # A single TCP read carries no guarantee that frame boundaries line
-        # up with read boundaries - it can hold several frames, or only part
-        # of one. Buffer what arrives and only act on the complete frames
-        # that leaves, the same way _AprilaireClientProtocol does on the
-        # other end of the socket; a mock that instead dropped a split frame
-        # would make the client look broken when it isn't.
+        # A single TCP read can hold several frames, or only part of one, so
+        # only the complete frames in the buffer are acted on.
         self.receive_buffer.extend(data)
 
         parseable_length = Packet.get_parseable_length(self.receive_buffer)
@@ -1219,8 +1134,6 @@ class _AprilaireServerProtocol(asyncio.Protocol):
     def connection_lost(self, exc: Exception | None) -> None:
         _LOGGER.info("Connection lost")
 
-        # Nothing left to notify, and this protocol instance is done - don't
-        # leave a timer holding a reference to it.
         self._cancel_written_outdoor_timeout()
 
         self.transport = None

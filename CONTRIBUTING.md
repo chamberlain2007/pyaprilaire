@@ -55,6 +55,8 @@ Concretely, that means:
 - Replace the `<!-- ... -->` prompts with real content. They are instructions for the author, not text to keep - a merged PR body should contain no leftover template comments.
 - Keep the checklist, and tick a box only when the thing is actually true. Leave the rest unticked rather than removing them.
 - In "Type of change", delete the entries that do not apply, leaving the one (or few) that do.
+- Keep "Summary" to one or two paragraphs: what changed and why, enough for a reviewer to approach the diff. The detail belongs in the diff, the commit messages, and the review discussion - a description that recounts the whole change is one nobody reads.
+- Keep "Testing" to a line or two naming what you ran and what it showed.
 
 ### Formatting PR descriptions and comments
 
@@ -67,7 +69,27 @@ So:
 - Use real Markdown structure for structure: headings, `-` lists, numbered lists, tables, fenced code blocks. Do not fake a list or a table by breaking lines by hand.
 - Line breaks are still correct inside fenced code blocks, and each list item is still its own line - the rule above is about prose, not about literal content.
 
+These rules govern how prose is written, not how much of it to write. A paragraph that runs as one long line is still a paragraph you have to justify - see the length limits above.
+
 Commit message bodies are plain text rather than rendered Markdown, so the usual git convention of wrapping the body around 72 columns still applies there.
+
+## Code comments
+
+Code should read without narration. A comment earns its place only when it is one of:
+
+1. A Python docstring on a module, class, or function.
+2. A short note explaining a line that genuinely cannot be understood from the code itself - a magic value taken from the protocol spec, a non-obvious guard, a workaround whose reason is invisible at the call site.
+
+Everything else comes out. In particular, do not write:
+
+- Restatements of what the line already says (`# Ensure already disconnected` above a disconnect call).
+- Design rationale, alternatives considered, or arguments for why the code is shaped the way it is.
+- Change history - "used to", "before #82", "regression fix", pointers to a PR description. Git and the pull request carry that.
+- Section banners and running commentary that narrate a file into chapters.
+
+Keep what survives brief, a line or two. An explanation that needs paragraphs belongs in a docstring, in this file or the README, or in the pull request description - not in a comment block.
+
+Docstrings follow the same brevity rule: state what the thing is or does, its parameters, what it returns, and what it raises - not why the implementation was chosen. This applies to tests as much as to library code.
 
 ## Linting
 

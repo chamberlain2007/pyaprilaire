@@ -41,9 +41,9 @@ MAPPING = {
             1: [
                 (None, None),  # 0 Connected To
                 (None, None),  # 1 Equipment Type
-                (Attribute.TEMPERATURE_SCALE, ValueType.INTEGER),  # 2
+                (Attribute.TEMPERATURE_SCALE, ValueType.INTEGER),
                 (None, None),  # 3 Reversing Valve
-                (Attribute.CONTROL_SETUP, ValueType.INTEGER),  # 4
+                (Attribute.CONTROL_SETUP, ValueType.INTEGER),
                 (None, None),  # 5 Cooling Stages / Compressor Stages
                 (None, None),  # 6 Heating Stages / Aux Heat Stages
                 (None, None),  # 7 Fan Control in Heating / Aux Equipment Type
@@ -51,15 +51,15 @@ MAPPING = {
                 (None, None),  # 9 Extended Fan - Cool
                 (None, None),  # 10 Internal Temp Sensor Offset
                 (None, None),  # 11 Internal RH Sensor Offset
-                (Attribute.AUTO_CHANGEOVER, ValueType.INTEGER),  # 12
-                (Attribute.DEADBAND, ValueType.INTEGER),  # 13
+                (Attribute.AUTO_CHANGEOVER, ValueType.INTEGER),
+                (Attribute.DEADBAND, ValueType.INTEGER),
                 (
                     Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_INSTALLED,
                     ValueType.INTEGER,
-                ),  # 14
-                (Attribute.OUTDOOR_SENSOR_INSTALLED, ValueType.INTEGER),  # 15
+                ),
+                (Attribute.OUTDOOR_SENSOR_INSTALLED, ValueType.INTEGER),
                 (None, None),  # 16 Reserved
-                (Attribute.RETURN_AIR_SENSOR_INSTALLED, ValueType.INTEGER),  # 17
+                (Attribute.RETURN_AIR_SENSOR_INSTALLED, ValueType.INTEGER),
                 (None, None),  # 18 Compressor Min Off Time
                 (None, None),  # 19 Heating Min Off Time
                 (None, None),  # 20 Equipment Min On Time
@@ -68,14 +68,14 @@ MAPPING = {
                 (None, None),  # 23 Second Stage Differential
                 (None, None),  # 24 Third Stage Differential
                 (None, None),  # 25 Fourth Stage Differential
-                (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),  # 26
-                (Attribute.HEAT_BLAST_AVAILABLE, ValueType.INTEGER),  # 27
+                (Attribute.AWAY_AVAILABLE, ValueType.INTEGER),
+                (Attribute.HEAT_BLAST_AVAILABLE, ValueType.INTEGER),
                 (None, None),  # 28 Heat Blast Offset
                 (None, None),  # 29 Stage Rate
-                (Attribute.PROGRESSIVE_RECOVERY_AVAILABLE, ValueType.INTEGER),  # 30
+                (Attribute.PROGRESSIVE_RECOVERY_AVAILABLE, ValueType.INTEGER),
                 (None, None),  # 31 Low Balance Point
                 (None, None),  # 32 High Balance Point
-                (Attribute.PROGRAM_FORMAT, ValueType.INTEGER),  # 33
+                (Attribute.PROGRAM_FORMAT, ValueType.INTEGER),
                 (None, None),  # 34 HVAC Service Reminder
                 (None, None),  # 35 Reserved
                 (None, None),  # 36 Turn Off WiFi Radio
@@ -119,34 +119,28 @@ MAPPING = {
         },
         FunctionalDomain.SCHEDULING: {
             4: [
-                (Attribute.HOLD, ValueType.INTEGER),  # 0
-                (Attribute.HOLD_FAN_MODE, ValueType.INTEGER),  # 1
-                (Attribute.HOLD_HEAT_SETPOINT, ValueType.TEMPERATURE),  # 2
-                (Attribute.HOLD_COOL_SETPOINT, ValueType.TEMPERATURE),  # 3
-                (Attribute.HOLD_DEHUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),  # 4
-                (Attribute.HOLD_END_MINUTE, ValueType.INTEGER),  # 5
-                (Attribute.HOLD_END_HOUR, ValueType.INTEGER),  # 6
-                (Attribute.HOLD_END_DATE, ValueType.INTEGER),  # 7
-                (Attribute.HOLD_END_MONTH, ValueType.INTEGER),  # 8
-                (Attribute.HOLD_END_YEAR, ValueType.INTEGER),  # 9, spec: add 2000
+                (Attribute.HOLD, ValueType.INTEGER),
+                (Attribute.HOLD_FAN_MODE, ValueType.INTEGER),
+                (Attribute.HOLD_HEAT_SETPOINT, ValueType.TEMPERATURE),
+                (Attribute.HOLD_COOL_SETPOINT, ValueType.TEMPERATURE),
+                (Attribute.HOLD_DEHUMIDIFICATION_SETPOINT, ValueType.HUMIDITY),
+                (Attribute.HOLD_END_MINUTE, ValueType.INTEGER),
+                (Attribute.HOLD_END_HOUR, ValueType.INTEGER),
+                (Attribute.HOLD_END_DATE, ValueType.INTEGER),
+                (Attribute.HOLD_END_MONTH, ValueType.INTEGER),
+                (Attribute.HOLD_END_YEAR, ValueType.INTEGER),  # spec: add 2000
             ],
         },
         FunctionalDomain.SENSORS: {
             1: [
                 (Attribute.BUILT_IN_TEMPERATURE_SENSOR_STATUS, ValueType.INTEGER),
                 (Attribute.BUILT_IN_TEMPERATURE_SENSOR_VALUE, ValueType.TEMPERATURE),
-                (
-                    Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
+                (Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_STATUS, ValueType.INTEGER),
                 (
                     Attribute.WIRED_REMOTE_TEMPERATURE_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
-                (
-                    Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
+                (Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_STATUS, ValueType.INTEGER),
                 (
                     Attribute.WIRED_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
@@ -165,14 +159,8 @@ MAPPING = {
                     Attribute.WIRELESS_OUTDOOR_TEMPERATURE_SENSOR_VALUE,
                     ValueType.TEMPERATURE,
                 ),
-                (
-                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS,
-                    ValueType.INTEGER,
-                ),
-                (
-                    Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE,
-                    ValueType.HUMIDITY,
-                ),
+                (Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_STATUS, ValueType.INTEGER),
+                (Attribute.WIRELESS_OUTDOOR_HUMIDITY_SENSOR_VALUE, ValueType.HUMIDITY),
             ],
             2: [
                 (
@@ -215,47 +203,38 @@ MAPPING = {
         },
         FunctionalDomain.STATUS: {
             1: [
-                (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, ValueType.INTEGER),  # 0
-                (Attribute.COS_CONTRACTOR_INFORMATION, ValueType.INTEGER),  # 1
-                (
-                    Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS,
-                    ValueType.INTEGER,
-                ),  # 2
-                (
-                    Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS,
-                    ValueType.INTEGER,
-                ),  # 3
-                (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, ValueType.INTEGER),  # 4
+                (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_CONTRACTOR_INFORMATION, ValueType.INTEGER),
+                (Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, ValueType.INTEGER),
                 (
                     Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
                     ValueType.INTEGER,
-                ),  # 5
-                (Attribute.COS_DEHUMIDIFICATION_SETPOINT, ValueType.INTEGER),  # 6
-                (Attribute.COS_HUMIDIFICATION_SETPOINT, ValueType.INTEGER),  # 7
-                (Attribute.COS_FRESH_AIR_SETTING, ValueType.INTEGER),  # 8
-                (Attribute.COS_AIR_CLEANING_SETTINGS, ValueType.INTEGER),  # 9
-                (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, ValueType.INTEGER),  # 10
-                (Attribute.COS_SCHEDULE_SETTINGS, ValueType.INTEGER),  # 11
-                (Attribute.COS_AWAY_SETTINGS, ValueType.INTEGER),  # 12
-                (Attribute.COS_SCHEDULE_DAY, ValueType.INTEGER),  # 13
-                (Attribute.COS_SCHEDULE_HOLD, ValueType.INTEGER),  # 14
-                (Attribute.COS_HEAT_BLAST, ValueType.INTEGER),  # 15
-                (Attribute.COS_SERVICE_REMINDERS_STATUS, ValueType.INTEGER),  # 16
-                (Attribute.COS_ALERTS_STATUS, ValueType.INTEGER),  # 17
-                (Attribute.COS_ALERTS_SETTINGS, ValueType.INTEGER),  # 18
-                (Attribute.COS_BACKLIGHT_SETTINGS, ValueType.INTEGER),  # 19
-                (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, ValueType.INTEGER),  # 20
+                ),
+                (Attribute.COS_DEHUMIDIFICATION_SETPOINT, ValueType.INTEGER),
+                (Attribute.COS_HUMIDIFICATION_SETPOINT, ValueType.INTEGER),
+                (Attribute.COS_FRESH_AIR_SETTING, ValueType.INTEGER),
+                (Attribute.COS_AIR_CLEANING_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, ValueType.INTEGER),
+                (Attribute.COS_SCHEDULE_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_AWAY_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_SCHEDULE_DAY, ValueType.INTEGER),
+                (Attribute.COS_SCHEDULE_HOLD, ValueType.INTEGER),
+                (Attribute.COS_HEAT_BLAST, ValueType.INTEGER),
+                (Attribute.COS_SERVICE_REMINDERS_STATUS, ValueType.INTEGER),
+                (Attribute.COS_ALERTS_STATUS, ValueType.INTEGER),
+                (Attribute.COS_ALERTS_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_BACKLIGHT_SETTINGS, ValueType.INTEGER),
+                (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, ValueType.INTEGER),
                 (None, None),  # 21 Reserved
-                (Attribute.COS_CONTROLLING_SENSOR_VALUES, ValueType.INTEGER),  # 22
-                (
-                    Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,
-                    ValueType.INTEGER,
-                ),  # 23
-                (Attribute.COS_THERMOSTAT_STATUS, ValueType.INTEGER),  # 24
-                (Attribute.COS_IAQ_STATUS, ValueType.INTEGER),  # 25
-                (Attribute.COS_MODEL_AND_REVISION, ValueType.INTEGER),  # 26
-                (Attribute.COS_SUPPORT_MODULE, ValueType.INTEGER),  # 27
-                (Attribute.COS_LOCKOUTS, ValueType.INTEGER),  # 28
+                (Attribute.COS_CONTROLLING_SENSOR_VALUES, ValueType.INTEGER),
+                (Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT, ValueType.INTEGER),
+                (Attribute.COS_THERMOSTAT_STATUS, ValueType.INTEGER),
+                (Attribute.COS_IAQ_STATUS, ValueType.INTEGER),
+                (Attribute.COS_MODEL_AND_REVISION, ValueType.INTEGER),
+                (Attribute.COS_SUPPORT_MODULE, ValueType.INTEGER),
+                (Attribute.COS_LOCKOUTS, ValueType.INTEGER),
             ],
             2: [
                 (Attribute.SYNCED, ValueType.INTEGER),
@@ -288,9 +267,9 @@ MAPPING = {
                 (Attribute.GAINSPAN_FIRMWARE_MINOR_REVISION, ValueType.INTEGER),
             ],
             2: [
-                (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),  # 0-5
-                (Attribute.FORCE_CONNECTION, ValueType.INTEGER),  # 6
-                (Attribute.CONNECTION_TYPE, ValueType.INTEGER),  # 7
+                (Attribute.MAC_ADDRESS, ValueType.MAC_ADDRESS),
+                (Attribute.FORCE_CONNECTION, ValueType.INTEGER),
+                (Attribute.CONNECTION_TYPE, ValueType.INTEGER),
             ],
             4: [
                 (Attribute.LOCATION, ValueType.TEXT, 7),
@@ -336,20 +315,9 @@ class Packet:
         complete frames.
 
         Spec section F: a frame is REV(1) SEQ(1) CNT(2, high byte first)
-        PAYLOAD(CNT bytes) CRC(1), i.e. `count + 5` bytes total, and that
-        stride holds regardless of whether the frame turns out to be valid -
-        `parse` below advances by exactly `count + 5` on every branch
-        (unknown action/domain/attribute, a malformed MAC/TEXT payload, a bad
-        CRC, ...). So finding frame boundaries only ever needs REV/SEQ/CNT,
-        never the semantic decoding `parse` does.
-
-        This is the piece a caller that's buffering a byte stream (see
-        `_AprilaireClientProtocol.data_received`) needs: how much of the
-        buffer is safe to hand to `parse` right now, leaving any trailing
-        partial frame for the next call. `parse` itself also tolerates a
-        short/truncated buffer directly (it simply stops rather than raising
-        or reading past the end), so this split is purely about letting a
-        streaming caller know where to cut - not about making `parse` safe.
+        PAYLOAD(CNT bytes) CRC(1), so frame boundaries need only REV/SEQ/CNT.
+        A caller buffering a byte stream uses this to find how much of the
+        buffer to hand to `parse`, leaving any trailing partial frame behind.
         """
         data_index = 0
         length = len(data)
@@ -370,13 +338,9 @@ class Packet:
         data_index = 0
 
         while data_index < len(data):
-            # A frame needs at least REV, SEQ, CNT (4 bytes) to know its own
-            # length, and at least 7 bytes to reach ACTION/FUNCTIONAL
-            # DOMAIN/ATTRIBUTE, which are always read at fixed offsets
-            # regardless of CNT. If either isn't available yet (a partial
-            # frame at the end of the buffer), stop without raising - the
-            # caller is expected to re-invoke with more data appended, or is
-            # content to have parsed only the leading complete frames.
+            # A partial frame at the end of the buffer stops the loop rather
+            # than raising: REV/SEQ/CNT need 4 bytes, and ACTION/FUNCTIONAL
+            # DOMAIN/ATTRIBUTE (read at fixed offsets below) need 7.
             if data_index + 4 > len(data):
                 break
 
@@ -400,14 +364,9 @@ class Packet:
                 continue
 
             if action == Action.NACK:
-                # Per spec section G, byte 5 of the payload is
-                # "FUNCTIONAL DOMAIN / STATUS CODE" - for a NACK it is a
-                # section H.5 status code (0x00-0xFF), not a
-                # FunctionalDomain member. It must not be coerced through
-                # FunctionalDomain, which only defines a subset of that
-                # range and would otherwise cause valid NACK frames
-                # carrying an out-of-range status code to be silently
-                # dropped.
+                # Spec section G: for a NACK this byte is a section H.5
+                # status code (0x00-0xFF), not a FunctionalDomain member, so
+                # it must not be coerced through that enum.
                 status_code = int(data[data_index + 5])
 
                 crc_index = data_index + 4 + count
@@ -415,11 +374,8 @@ class Packet:
                 if crc_index < len(data) and Packet._verify_crc(
                     data[data_index:crc_index], data[crc_index]
                 ):
-                    # Spec section F notes 2-3: a NACK must be attributable
-                    # back to the request that caused it via sequence
-                    # number, the same as any other response - so the
-                    # sequence parsed from this frame's header must be
-                    # preserved rather than dropped.
+                    # Spec section F notes 2-3: a NACK carries the sequence
+                    # number of the request that caused it.
                     yield NackPacket(status_code, sequence=sequence)
 
                 data_index += count + 5
@@ -443,7 +399,6 @@ class Packet:
                 action, functional_domain, attribute, revision, sequence, count
             )
 
-            # Skip header
             final_index = data_index + count + 3
             payload_start_index = data_index
             data_index += 7
@@ -496,11 +451,9 @@ class Packet:
                             )
                         data_index += 1
                     elif value_type == ValueType.MAC_ADDRESS:
-                        # MAC_ADDRESS is a fixed 6 bytes. If the frame's
-                        # declared length doesn't leave room for all 6, the
-                        # frame is malformed - reading past final_index would
-                        # consume the CRC byte (or the next frame's bytes)
-                        # and desynchronize the stream.
+                        # A MAC that overruns the frame's declared length
+                        # would consume the CRC (or the next frame) and
+                        # desynchronize the stream.
                         if data_index + 5 > final_index:
                             frame_malformed = True
                             break
@@ -516,7 +469,7 @@ class Packet:
                         text_length = extra_attribute_info[0]
 
                         # TEXT consumes text_length bytes plus one trailing
-                        # byte. Same overshoot risk as MAC_ADDRESS above.
+                        # byte; same overshoot risk as MAC_ADDRESS above.
                         if data_index + text_length > final_index:
                             frame_malformed = True
                             break
@@ -621,12 +574,8 @@ class Packet:
                     for attribute_info in mapped_attributes
                     if attribute_info[0] is not None
                 ):
-                    # Every mapped field is None, so every byte would
-                    # serialize as NULL (spec section G) - a write that
-                    # changes nothing on the device. That's never useful
-                    # deliberately, and is far more likely an empty `data`
-                    # dict reaching here by mistake than an intentional
-                    # no-op write.
+                    # Spec section G: an all-NULL payload changes nothing on
+                    # the device, so such a write is rejected as a mistake.
                     raise ValueError(
                         f"Write to {self.functional_domain!s}/{self.attribute} "
                         "has no populated fields - every mapped field would "
@@ -643,12 +592,9 @@ class Packet:
                     data_value = self.data.get(attribute_name)
 
                     if data_value is None:
-                        # Spec section G: writing NULL (0x00) for a field
-                        # leaves it unmodified on the thermostat - this is
-                        # the documented mechanism for partial writes, and
-                        # applies to every field absent from `data`. The
-                        # byte count must still match what a populated value
-                        # of this ValueType would occupy.
+                        # Spec section G: NULL (0x00) leaves a field
+                        # unmodified, but must still occupy as many bytes as a
+                        # populated value of this ValueType would.
                         if value_type == ValueType.MAC_ADDRESS:
                             payload.extend([0] * 6)
                         elif value_type == ValueType.TEXT:
@@ -678,9 +624,8 @@ class Packet:
                             else:
                                 payload.append(ord(data_value[i]))
                     else:  # pragma: no cover
-                        # Every ValueType member is handled by name above;
-                        # this only guards against a future member being
-                        # added here without a corresponding branch.
+                        # Guards against a ValueType member added without a
+                        # branch above.
                         payload.append(0)
 
         payload_length_high, payload_length_low = self._encode_int_value(len(payload))
