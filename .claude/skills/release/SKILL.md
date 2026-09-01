@@ -159,8 +159,9 @@ release link back to the user; that's the deliverable for this phase.
 
 ## Release notes format
 
-Both rc and final releases use the same two-part shape — a narrative paragraph
-first, then the mechanical PR list — rather than a bare auto-generated list:
+Both rc and final releases use the same three-part shape — a narrative paragraph,
+then the mechanical PR list, then the compare link — rather than a bare
+auto-generated list:
 
 1. **A short narrative paragraph.** One paragraph, prose, no bullets: describe what
    the release actually does for someone using the library (new device support, a
@@ -170,9 +171,10 @@ first, then the mechanical PR list — rather than a bare auto-generated list:
    don't pad it with filler like "this release contains various improvements."
 2. **A bulleted list of the PRs**, each formatted exactly like GitHub's own
    changelog entries: `<PR title> by @<author> in #<number>`.
+3. **The full-changelog compare link**, e.g. `Full Changelog: 0.9.0...0.9.1`.
 
-Get part 2 for free from GitHub's notes generator instead of composing it by hand —
-it already produces exactly this format — and only write part 1 yourself:
+Get parts 2 and 3 for free from GitHub's notes generator instead of composing them
+by hand — it already produces exactly this format — and only write part 1 yourself:
 
 ```bash
 gh api repos/chamberlain2007/pyaprilaire/releases/generate-notes \
@@ -184,19 +186,25 @@ gh api repos/chamberlain2007/pyaprilaire/releases/generate-notes \
 
 (omit `-f previous_tag_name=...` entirely if there is no previous tag). This
 returns a `## What's Changed` section with one `* <title> by @<author> in #<number>`
-line per merged PR, plus a `**Full Changelog**` compare link. Read those PR titles,
-write your narrative paragraph, then assemble the final file:
+line per merged PR, followed by a `**Full Changelog**: <compare-url>` line that
+GitHub renders as `Full Changelog: <old-tag>...<new-tag>`. Read those PR titles,
+write your narrative paragraph, then assemble the final file with all three parts,
+keeping the generated section (list + compare link) intact rather than
+reconstructing it:
 
 ```
 <your narrative paragraph>
 
-<the body returned by generate-notes, unchanged>
+## What's Changed
+<the bulleted PR list from generate-notes, unchanged>
+
+**Full Changelog**: <the compare link from generate-notes, unchanged>
 ```
 
 Save that to `/tmp/release-notes.md` and pass it via `--notes-file` when creating
-the release (both here and in Phase 2). Don't hand-roll the bullet list yourself —
-reusing GitHub's generated one keeps author handles, PR numbers, and link
-formatting exactly right.
+the release (both here and in Phase 2). Don't hand-roll the bullet list or the
+compare link yourself — reusing GitHub's generated ones keeps author handles, PR
+numbers, and link formatting exactly right.
 
 ## Phase 2: Run release
 
