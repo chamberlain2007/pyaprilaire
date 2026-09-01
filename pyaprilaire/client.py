@@ -1279,7 +1279,14 @@ class AprilaireClient(SocketClient):
             )
             raise ResponseTimeoutError(functional_domain, attribute, timeout) from exc
         except NackError as exc:
-            self.logger.error(
+            # Debug for the same reason as the timeout above: this branch
+            # re-raises, so the failure is already reported to the caller,
+            # and this line would only duplicate it. The NACK itself is
+            # still logged at error level by
+            # `_AprilaireClientProtocol._handle_nack`, which is the only
+            # record of it for the many requests this library sends
+            # without waiting on a response.
+            self.logger.debug(
                 "Received NACK waiting for %s, %d: %s",
                 int(functional_domain),
                 attribute,
