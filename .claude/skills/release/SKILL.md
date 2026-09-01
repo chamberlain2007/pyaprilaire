@@ -1,0 +1,232 @@
+---
+name: release
+description: Cut and ship a pyaprilaire release — draft a release candidate (rc) off develop, iterate rc's as needed, and then finalize and publish the real version. Use this whenever the user asks to "start a release", "cut a new version", "prepare a draft release", "make an rc", "bump the version", "release X.Y.Z", or "run/finish/publish the release". Covers the full lifecycle: release branch, PR to main, bumpver version bumps, git tags, and GitHub draft/published releases.
+---
+
+# Release pyaprilaire
+
+This repo ships releases through a `release/X.Y.Z` branch that goes through one or
+more **release candidates (rc)** before becoming the real, published version. There
+are two phases, each triggered by the user explicitly:
+
+- **Prepare draft release** — start a new release or cut another rc for one already
+  in progress. Safe to run repeatedly; nothing here is public-facing in a way that's
+  hard to undo (a branch, a PR, and *draft* GitHub releases).
+- **Run release** — finalize the version, merge to `main`, and publish the real
+  release. This is the irreversible, public step: publishing a non-prerelease
+  GitHub release fires `.github/workflows/python-publish.yml`, which uploads to the
+  **real PyPI**. Always confirm with the user before merging to `main` and before
+  publishing, even though they invoked this skill directly — read back what you're
+  about to do (version, target branch, "this goes to real PyPI") and get a
+  go-ahead first.
+
+Both phases need the `gh` CLI (authenticated) and `bumpver` (`pip install -e .[dev]`
+pulls it in). Work from a clean working tree — check `git status` before touching
+branches, and don't start a phase with local uncommitted changes lying around.
+
+## Why the version math is simple
+
+`pyproject.toml` already has `[tool.bumpver]` configured with `tag = true` and
+`commit = true` (and `push = false`, so pushing is always an explicit step you take
+below). That means every `bumpver update` call commits the version bump *and*
+creates the matching annotated git tag locally in one shot — you don't need to
+compute version numbers or tag names by hand, or track what rc you're on yourself.
+bumpver reads the current version from `pyproject.toml` and from existing VCS tags,
+so it always knows what "next" means.
+
+- `bumpver update --set-version X.Y.Zrc0` — jump straight to an explicit version;
+  used to start a brand-new release at rc0.
+- `bumpver update --tag rc --tag-num` — bump the rc number (rc0 → rc1 → rc2 …) on
+  whatever version is already checked out. This is what makes "cut another rc" cheap
+  for the user: no version math, just run it on the release branch.
+- `bumpver update --tag final` — strip the rc suffix, leaving the plain `X.Y.Z`.
+  Used only in "Run release".
+
+Each of these leaves an unpushed commit + annotated tag on your current branch. You
+always push both explicitly afterward (`git push` and `git push origin <tag>`),
+which keeps the point where things become visible to others deliberate rather than
+implicit in the bumpver call.
+
+## Phase 1: Prepare draft release
+
+### Step 0 — figure out which case you're in
+
+Ask the user for the target version if they haven't given one (e.g. `1.2.0`) — a
+plain `MAJOR.MINOR.PATCH`, no rc suffix; you add that. Then check whether the
+release branch already exists:
+
+```bash
+git fetch origin develop main
+git ls-remote --heads origin "release/X.Y.Z"
+```
+
+- **No such branch** → this is a **new release**, starting at rc0.
+- **Branch already exists** → this is **another rc** for a release already in
+  flight. You don't need the user to state the rc number; bumpver derives the next
+  one from the tags already on the branch.
+
+### Step A — create or update the release branch
+
+New release:
+
+```bash
+git checkout -b release/X.Y.Z origin/develop
+git push -u origin release/X.Y.Z
+```
+
+Existing release (new rc) — bring it up to date with develop before cutting the
+next rc, since the point of another rc is usually to pick up fixes that landed on
+develop since the last one:
+
+```bash
+git checkout release/X.Y.Z
+git pull origin release/X.Y.Z
+git merge origin/develop --no-edit
+```
+
+If the merge conflicts, stop and resolve it with the user rather than guessing at
+intent — these are real conflicts between develop and an in-flight release. Push
+once resolved (or immediately if it merged clean):
+
+```bash
+git push origin release/X.Y.Z
+```
+
+### Step B — open the PR to main (first rc only)
+
+Skip this if a PR from `release/X.Y.Z` to `main` already exists — check with
+`gh pr list --head release/X.Y.Z --base main`. Later rc's just add commits to it;
+GitHub updates the PR automatically, nothing to do here.
+
+```bash
+gh pr create --base main --head release/X.Y.Z \
+  --title "release: X.Y.Z" \
+  --body "Release candidate for X.Y.Z. Do not merge until the release is ready to ship — see the draft GitHub releases for rc-by-rc changelogs."
+```
+
+Fill in the repo's PR template (`.github/pull_request_template.md`) if `gh pr
+create` doesn't apply it automatically.
+
+### Step C — bump the version on the release branch
+
+New release (rc0):
+
+```bash
+bumpver update --set-version X.Y.Zrc0
+```
+
+Another rc on an existing release:
+
+```bash
+bumpver update --tag rc --tag-num
+```
+
+Then push the branch and the tag bumpver just created (the exact tag name, e.g.
+`X.Y.Zrc1`, is printed in bumpver's output):
+
+```bash
+git push origin release/X.Y.Z
+git push origin X.Y.Zrc<N>
+```
+
+### Step D — draft the GitHub release with the changelog
+
+The changelog scope differs by rc, because rc's should show only what's *new since
+the last rc*, not the whole release again:
+
+- **rc0**: notes should cover everything since the last real, published release.
+  Find the previous final tag with
+  `gh release list --exclude-drafts --exclude-pre-releases --limit 1`. If there
+  isn't one (first-ever release), omit `--notes-start-tag` and let notes cover the
+  full history.
+- **rc1 and later**: notes should start from the *previous rc tag of this same
+  release* (e.g. rc2's notes start at rc1), so only newly merged PRs show up.
+
+```bash
+gh release create X.Y.Zrc<N> \
+  --target release/X.Y.Z \
+  --title "X.Y.Zrc<N>" \
+  --draft --prerelease \
+  --generate-notes \
+  --notes-start-tag <previous-tag>   # omit entirely if there is no previous tag
+```
+
+`--draft` means nothing publishes or fires the PyPI workflow yet — it's just
+visible in the repo's Releases tab for review. Report the PR link and the draft
+release link back to the user; that's the deliverable for this phase.
+
+## Phase 2: Run release
+
+Only start this once the user confirms the release is actually ready to ship — this
+phase merges to `main` and can publish to real PyPI.
+
+### Step A — strip the rc suffix
+
+```bash
+git checkout release/X.Y.Z
+git pull origin release/X.Y.Z
+bumpver update --tag final
+git push origin release/X.Y.Z
+```
+
+This leaves a final commit on the release branch at the plain `X.Y.Z` version, plus
+a local annotated tag `X.Y.Z` (not yet pushed — push it in Step C, after the merge,
+so the tag's commit is verified to be part of `main`'s history first).
+
+### Step B — merge to main
+
+Confirm with the user before this step: merging is what makes the release branch's
+content land on `main`. Use a real merge (not squash/rebase) so the tagged bumpver
+commit stays intact and part of `main`'s history:
+
+```bash
+gh pr merge --merge <PR-number-or-release/X.Y.Z>
+```
+
+If the PR can't merge cleanly (branch protection, required checks, conflicts),
+surface that to the user rather than forcing it through.
+
+### Step C — push the final tag and publish the release
+
+```bash
+git fetch origin main
+git push origin X.Y.Z
+```
+
+Create the release as a draft first, then publish it as an explicit, confirmed
+second action — publishing is the point of no return (fires the real-PyPI upload):
+
+```bash
+gh release create X.Y.Z \
+  --target main \
+  --title "X.Y.Z" \
+  --draft \
+  --generate-notes \
+  --notes-start-tag <previous-final-release-tag>   # omit if this is the first release
+```
+
+Read the draft back to the user (or point them at its URL) and confirm they want it
+live, then:
+
+```bash
+gh release edit X.Y.Z --draft=false
+```
+
+This is not a prerelease, so `python-publish.yml` uploads the build to the real
+PyPI. Report the published release URL and confirm the PyPI upload workflow run
+looks good (`gh run list --workflow python-publish.yml --limit 1`).
+
+## Troubleshooting
+
+- **Working tree not clean**: don't stash or discard anything automatically — show
+  the user `git status` and ask how to proceed. It may be in-progress work worth
+  keeping.
+- **bumpver refuses to bump ("invariant violated")**: usually means the local repo
+  is missing a tag that exists on the remote, or vice versa. Run `git fetch --tags
+  origin` and retry; bumpver cross-checks `pyproject.toml` against VCS tags.
+- **No prior release for `--notes-start-tag`**: this is normal for the very first
+  release ever cut, or the first rc of a release where nothing has been tagged yet
+  — just omit the flag.
+- **User asks for another rc without giving a version**: that's expected and fine —
+  reuse the version from the existing `release/X.Y.Z` branch name (or the current
+  `pyproject.toml` version on that branch) rather than asking them to repeat it.
