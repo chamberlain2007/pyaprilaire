@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from collections.abc import Awaitable, Callable
-from logging import Logger
 from typing import Any
 
 from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain, NackStatus
 from .packet import NackPacket, Packet
 from .socket_client import SocketClient
+
+_LOGGER = logging.getLogger(__name__)
 
 # Spec section F: CNT is 2 bytes (0-65535), so a complete frame is at most
 # CNT + 5 (REV, SEQ, CNT high/low, PAYLOAD, CRC) bytes. A receive buffer that
@@ -311,14 +313,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         data_received_callback: Callable[
             [FunctionalDomain, int, dict[str, Any], int | None], None
         ],
-        logger: Logger,
         reconnect_action: Callable[[], Awaitable[None]] | None = None,
         connected_action: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the protocol"""
         self.data_received_callback = data_received_callback
         self.reconnect_action = reconnect_action
-        self.logger = logger
 
         # Called once the socket is up and the send queue is running, so
         # the owning client can run whatever request sequence it wants on a
@@ -371,14 +371,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         self._in_flight_requests[packet.sequence] = (packet, 0)
 
-        self.logger.debug(
-            "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
-            packet.sequence,
-            str(packet.action),
-            str(packet.functional_domain),
-            packet.attribute,
-        )
-
         await self.packet_queue.put(packet)
 
         return packet.sequence
@@ -405,13 +397,11 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                         try:
                             serialized_packet = packet.serialize()
 
-                            self.logger.info(
-                                "Sent data: %s", serialized_packet.hex(" ")
-                            )
+                            _LOGGER.debug("Sent data: %s", serialized_packet.hex(" "))
 
                             self.transport.write(serialized_packet)
                         except Exception:
-                            self.logger.exception(
+                            _LOGGER.exception(
                                 "Failed to send packet, action=%s, "
                                 "functional_domain=%s, attribute=%s",
                                 packet.action,
@@ -425,8 +415,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def connection_made(self, transport: asyncio.Transport):
         """Called when a connection has been made to the socket"""
-        self.logger.info("Aprilaire connection made")
-
         self.transport = transport
         self._empty_packet_queue()
 
@@ -461,10 +449,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 # has a resolvable frame boundary at its start, making
                 # parseable_length == 0 impossible here. Kept as a guard in
                 # case that contract ever changes.
-                self.logger.error(
-                    "Discarding %d bytes without a complete frame",
-                    len(self._receive_buffer),
-                )
                 self._receive_buffer = bytearray()
 
             return []
@@ -476,7 +460,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
-        self.logger.info("Aprilaire data received %s", data.hex(" "))
+        _LOGGER.debug("Aprilaire data received %s", data.hex(" "))
 
         try:
             parsed_packets = self._parse_received_data(data)
@@ -485,17 +469,10 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             # callback: asyncio's transport treats any exception escaping
             # data_received as fatal and closes the connection (see
             # asyncio/selector_events.py's _read_ready__data_received).
-            self.logger.exception("Failed to parse received data")
+            _LOGGER.exception("Failed to parse received data")
             return
 
         for packet in parsed_packets:
-            self.logger.debug(
-                "Received data, action=%s, functional_domain=%s, attribute=%d",
-                str(packet.action),
-                str(packet.functional_domain),
-                packet.attribute,
-            )
-
             if isinstance(packet, NackPacket):
                 self._handle_nack(packet)
                 continue
@@ -505,20 +482,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             # See `_in_flight_requests`.
             self._in_flight_requests.pop(packet.sequence, None)
 
-            if Attribute.ERROR in packet.data:
-                error = packet.data[Attribute.ERROR]
-
-                if error != 0:
-                    self.logger.error("Thermostat error: %d", error)
-
             if (
                 packet.action == Action.COS
                 and packet.functional_domain == FunctionalDomain.CONTROL
                 and packet.attribute == 1
                 and packet.data.get(Attribute.MODE) == 1
             ):
-                self.logger.info("Re-reading control because of COS with mode==1")
-
                 asyncio.ensure_future(self.read_control())
 
                 continue
@@ -559,7 +528,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             original_packet, retry_count = in_flight
 
             if status in RETRYABLE_NACK_STATUSES and retry_count < MAX_NACK_RETRIES:
-                self.logger.error(
+                _LOGGER.error(
                     "Received NACK: %s, sequence=%d - retrying (%d/%d)",
                     status.name,
                     packet.sequence,
@@ -575,7 +544,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 asyncio.ensure_future(self._retry_packet(original_packet))
                 return
 
-        self.logger.error(
+        _LOGGER.error(
             "Received NACK: %s, sequence=%d",
             status.name if status is not None else f"unknown status 0x{raw_status:02X}",
             packet.sequence,
@@ -616,8 +585,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Called when the connection to the socket has been lost"""
-        self.logger.info("Aprilaire connection lost")
-
         if self.data_received_callback:
             asyncio.ensure_future(
                 self.data_received_callback(
@@ -895,7 +862,6 @@ class AprilaireClient(SocketClient):
         host: str,
         port: int,
         data_received_callback: Callable[[dict[str, Any]], None],
-        logger: Logger,
         reconnect_interval: int = None,
         retry_connection_interval: int = None,
     ) -> None:
@@ -905,7 +871,6 @@ class AprilaireClient(SocketClient):
             host,
             port,
             data_received_callback,
-            logger,
             reconnect_interval,
             retry_connection_interval,
         )
@@ -943,12 +908,26 @@ class AprilaireClient(SocketClient):
         self._reported_availability: dict[tuple[FunctionalDomain, int], bool] = {}
 
     async def _reconnect_with_delay(self):
+        """Reconnect after a lost connection.
+
+        Wired in as the protocol's `reconnect_action`, so this runs on every
+        `connection_lost` - which is what makes it, rather than the protocol
+        itself, the place that can tell a real disconnect from the periodic
+        reconnect `SocketClient._auto_reconnect_loop` performs. Only the
+        former is logged; the latter closes the transport on a timer while
+        `auto_reconnecting` is set (it stays set for the whole reconnect,
+        including the delay this call sleeps out), and a connect/disconnect
+        pair logged every hour for a connection that was never down says
+        nothing.
+        """
+        if not self.auto_reconnecting:
+            _LOGGER.info("Aprilaire connection lost")
+
         await super()._reconnect(self.retry_connection_interval)
 
     def create_protocol(self):
         return _AprilaireClientProtocol(
             self.data_received,
-            self.logger,
             self._reconnect_with_delay,
             self.connection_made,
         )
@@ -1098,15 +1077,6 @@ class AprilaireClient(SocketClient):
             return nack_error
 
         key = (functional_domain, attribute)
-
-        if key not in self.unsupported_attributes:
-            self.logger.warning(
-                "Thermostat does not support %s, %d (%s); it will not be "
-                "requested again",
-                int(functional_domain),
-                attribute,
-                nack_error.status.name,
-            )
 
         unsupported_error = UnsupportedAttributeError(
             nack_error.status, nack_error.raw_status
@@ -1265,34 +1235,15 @@ class AprilaireClient(SocketClient):
         try:
             return await asyncio.wait_for(future, timeout)
         except asyncio.exceptions.TimeoutError as exc:
-            # Logged at debug, not error: the timeout is reported to the
-            # caller by the raise, and only the caller knows whether a
-            # missed response here matters (a failed setup) or is routine
-            # (a poll that will come round again). Logging it as an error
-            # here would put a scary line in the log for a timeout the
-            # caller handled perfectly well.
-            self.logger.debug(
-                "Hit timeout of %s waiting for %s, %d",
-                timeout,
-                int(functional_domain),
-                attribute,
-            )
+            # Not logged: the raise reports the timeout to the caller with
+            # the same detail a log line would carry, and only the caller
+            # knows whether a missed response matters (a failed setup) or is
+            # routine (a poll that will come round again). A `NackError`
+            # isn't caught here at all - it propagates from the future
+            # as-is. `_AprilaireClientProtocol._handle_nack` is what logs
+            # that, and is its only record for the many requests this
+            # library sends without waiting on a response.
             raise ResponseTimeoutError(functional_domain, attribute, timeout) from exc
-        except NackError as exc:
-            # Debug for the same reason as the timeout above: this branch
-            # re-raises, so the failure is already reported to the caller,
-            # and this line would only duplicate it. The NACK itself is
-            # still logged at error level by
-            # `_AprilaireClientProtocol._handle_nack`, which is the only
-            # record of it for the many requests this library sends
-            # without waiting on a response.
-            self.logger.debug(
-                "Received NACK waiting for %s, %d: %s",
-                int(functional_domain),
-                attribute,
-                exc,
-            )
-            raise
         finally:
             # Whether resolved, timed out, or cancelled, this entry must not
             # linger in self.futures - otherwise a timed-out wait leaves a
@@ -1572,19 +1523,11 @@ class AprilaireClient(SocketClient):
             # Not an error here: with the current mask unknown, this falls
             # through to writing the desired one unconditionally, which is
             # the same thing it would do for a mask that doesn't match.
-            self.logger.debug(
-                "Timed out reading the current COS subscriptions; "
-                "writing the desired mask unconditionally"
-            )
-
             current = None
 
         if current is not None and all(
             current.get(attribute) == value for attribute, value in desired.items()
         ):
-            self.logger.debug(
-                "COS subscriptions already match the desired state; skipping write"
-            )
             return
 
         await self.protocol.write_cos_subscriptions(desired)
