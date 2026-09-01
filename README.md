@@ -12,6 +12,8 @@ In order to connect to the thermostat, you will need to enable automation mode. 
 
 # Development
 
+pyaprilaire requires Python 3.14 or later, matching the minimum supported by Home Assistant.
+
 ## Linting
 
 This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formatting. After installing the `dev` extra (`pip install -e .[dev]`), enable the pre-commit hooks with:
