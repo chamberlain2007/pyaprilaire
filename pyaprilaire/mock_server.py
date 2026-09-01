@@ -454,7 +454,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
 
         while index + 7 <= len(data):
             sequence = data[index + 1]
-            count = (data[index + 2] << 2) | data[index + 3]
+            count = (data[index + 2] << 8) | data[index + 3]
             action_byte = data[index + 4]
             domain_byte = data[index + 5]
             attribute = data[index + 6]
@@ -909,7 +909,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
                 self._handle_write(packet)
             elif packet.action == Action.NACK:
                 _LOGGER.warning(
-                    "Received NACK from client, status code %d", packet.nack_attribute
+                    "Received NACK from client, status code %d", packet.status_code
                 )
             else:
                 _LOGGER.warning(
