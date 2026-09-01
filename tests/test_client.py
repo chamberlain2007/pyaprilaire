@@ -10,7 +10,9 @@ from pyaprilaire.client import (
     COS_SUBSCRIPTIONS_READ_TIMEOUT,
     DEFAULT_COS_SUBSCRIPTIONS,
     AprilaireClient,
+    AprilaireResponseError,
     NackError,
+    ResponseTimeoutError,
     UnsupportedAttributeError,
     _AprilaireClientProtocol,
 )
@@ -21,26 +23,18 @@ tracemalloc.start()
 
 
 @pytest.fixture
-def logger():
-    logger = logging.getLogger()
-    logger.propagate = False
-
-    return logger
-
-
-@pytest.fixture
-def protocol(event_loop, logger):
+def protocol(event_loop):
     data_received_callback = AsyncMock()
     reconnect_action = AsyncMock()
 
-    return _AprilaireClientProtocol(data_received_callback, logger, reconnect_action)
+    return _AprilaireClientProtocol(data_received_callback, reconnect_action)
 
 
 @pytest.fixture
-def client(event_loop, logger, protocol):
+def client(event_loop, protocol):
     data_received_callback = Mock()
 
-    client = AprilaireClient(None, None, data_received_callback, logger, 10, 10)
+    client = AprilaireClient(None, None, data_received_callback, 10, 10)
 
     client.protocol = protocol
 
@@ -348,11 +342,11 @@ def test_protocol_mode_re_read(protocol: _AprilaireClientProtocol):
     assert protocol.read_control.call_count == 1
 
 
-def test_protocol_connection_lost_without_reconnect_action(logger):
+def test_protocol_connection_lost_without_reconnect_action():
     # reconnect_action is optional in the same way connected_action is -
     # losing the connection without one must still notify the callback
     # rather than raising.
-    protocol = _AprilaireClientProtocol(AsyncMock(), logger)
+    protocol = _AprilaireClientProtocol(AsyncMock())
 
     assert protocol.reconnect_action is None
 
@@ -963,10 +957,18 @@ async def test_client_sync(client: AprilaireClient, protocol: _AprilaireClientPr
     )
 
 
+def _cos_read_timeout() -> ResponseTimeoutError:
+    """The timeout `configure_cos`'s read raises when the thermostat doesn't
+    answer, which is what sends it down the write-unconditionally path."""
+    return ResponseTimeoutError(
+        FunctionalDomain.STATUS, 1, COS_SUBSCRIPTIONS_READ_TIMEOUT
+    )
+
+
 async def test_client_configure_cos_reads_before_writing(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
-    client.wait_for_response = AsyncMock(return_value=None)
+    client.wait_for_response = AsyncMock(side_effect=_cos_read_timeout())
 
     await client.configure_cos()
 
@@ -1052,7 +1054,7 @@ async def test_client_configure_cos_reserved_byte_never_forced(
 async def test_client_configure_cos_overrides(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
-    client.wait_for_response = AsyncMock(return_value=None)
+    client.wait_for_response = AsyncMock(side_effect=_cos_read_timeout())
 
     await client.configure_cos(overrides={Attribute.COS_DEHUMIDIFICATION_SETPOINT: 0})
 
@@ -1068,7 +1070,7 @@ async def test_client_configure_cos_overrides_ignore_unmapped_attributes(
 ):
     # An override for something outside the COS mask (or the Reserved byte,
     # which has no Attribute) is silently ignored rather than raising.
-    client.wait_for_response = AsyncMock(return_value=None)
+    client.wait_for_response = AsyncMock(side_effect=_cos_read_timeout())
 
     await client.configure_cos(overrides={Attribute.MODE: 5})
 
@@ -1132,7 +1134,7 @@ def test_client_connected_attribute_not_shadowed_by_a_method(
 async def test_client_update_status(
     client: AprilaireClient, protocol: _AprilaireClientProtocol
 ):
-    client.wait_for_response = AsyncMock(return_value=None)
+    client.wait_for_response = AsyncMock(side_effect=_cos_read_timeout())
 
     sleep_mock = AsyncMock()
 
@@ -1142,8 +1144,9 @@ async def test_client_update_status(
     # mac_address, thermostat_status, iaq_status, control,
     # thermostat_iaq_available, sensors, sensor_values,
     # written_outdoor_temperature, thermostat_name, scheduling,
-    # configure_cos (a read, then a write because the read returned no
-    # current mask), dehumidification_setpoint, humidification_setpoint,
+    # configure_cos (a read, then a write because the read timed out,
+    # leaving the current mask unknown), dehumidification_setpoint,
+    # humidification_setpoint,
     # sync.
     assert protocol.packet_queue.qsize() == 15
     assert sleep_mock.call_count == 1
@@ -1390,14 +1393,42 @@ async def test_client_wait_for_response_success(client: AprilaireClient):
 
 
 async def test_client_wait_for_response_timeout(client: AprilaireClient):
+    """A wait that times out raises `ResponseTimeoutError` rather than
+    returning `None`: a caller that forgets to check a return value would
+    otherwise carry on as though the missing response were data."""
+
     wait_for_mock = AsyncMock(side_effect=asyncio.exceptions.TimeoutError)
 
     with patch("asyncio.wait_for", new=wait_for_mock):
-        wait_for_response_result = await client.wait_for_response(
-            FunctionalDomain.CONTROL, 1, 1
-        )
+        with pytest.raises(ResponseTimeoutError) as exc_info:
+            await client.wait_for_response(FunctionalDomain.CONTROL, 1, 1)
 
-    assert wait_for_response_result is None
+    # The error carries what timed out, so a caller (or a log line) doesn't
+    # have to reconstruct it from the call site.
+    assert exc_info.value.functional_domain == FunctionalDomain.CONTROL
+    assert exc_info.value.attribute == 1
+    assert exc_info.value.timeout == 1
+
+
+def test_response_timeout_error_hierarchy():
+    """Both failure modes share a base, so a caller that only needs to know
+    no data arrived can catch one type, while a caller that cares whether
+    retrying is worthwhile can still tell them apart."""
+
+    timeout_error = ResponseTimeoutError(FunctionalDomain.CONTROL, 1, 5)
+    nack_error = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
+
+    assert isinstance(timeout_error, AprilaireResponseError)
+    assert isinstance(nack_error, AprilaireResponseError)
+
+    assert not isinstance(timeout_error, NackError)
+    assert not isinstance(nack_error, ResponseTimeoutError)
+
+    # Not an `asyncio.TimeoutError`/`OSError` - see the class docstring.
+    assert not isinstance(timeout_error, asyncio.exceptions.TimeoutError)
+
+    assert "CONTROL" in str(timeout_error)
+    assert "5" in str(timeout_error)
 
 
 # --- Regression tests for the sequence-correlation defects described in
@@ -1570,9 +1601,9 @@ async def test_client_wait_for_response_timeout_removes_future(
     in `self.futures` - `asyncio.wait_for` cancels the future, but nothing
     previously removed the corresponding list entry."""
 
-    result = await client.wait_for_response(FunctionalDomain.CONTROL, 1, 0.01)
+    with pytest.raises(ResponseTimeoutError):
+        await client.wait_for_response(FunctionalDomain.CONTROL, 1, 0.01)
 
-    assert result is None
     assert client.futures == {}
 
 
@@ -1586,9 +1617,9 @@ async def test_client_wait_for_response_timeout_removes_only_its_own_entry(
     future_key = (FunctionalDomain.CONTROL, 1)
     client.futures[future_key] = [(sibling_future, None)]
 
-    result = await client.wait_for_response(FunctionalDomain.CONTROL, 1, 0.01)
+    with pytest.raises(ResponseTimeoutError):
+        await client.wait_for_response(FunctionalDomain.CONTROL, 1, 0.01)
 
-    assert result is None
     assert client.futures == {future_key: [(sibling_future, None)]}
 
 
@@ -1605,6 +1636,10 @@ async def test_client_reconnect_with_delay(client: AprilaireClient):
 async def test_test_connection(client: AprilaireClient):
     reconnect_once_mock = AsyncMock()
 
+    client.read_mac_address_and_wait = AsyncMock(
+        return_value={Attribute.MAC_ADDRESS: "1:2:3:4:5:6"}
+    )
+
     with patch(
         "pyaprilaire.socket_client.SocketClient._reconnect_once",
         new=reconnect_once_mock,
@@ -1612,6 +1647,31 @@ async def test_test_connection(client: AprilaireClient):
         await client.test_connection()
 
         assert reconnect_once_mock.call_count == 1
+        assert client.read_mac_address_and_wait.call_args == call(5)
+
+
+async def test_test_connection_stops_listening_on_timeout(client: AprilaireClient):
+    """The single connection slot must also be released when the thermostat
+    accepts the connection but never answers the identification read -
+    `wait_for_response` raises `ResponseTimeoutError` there, and (like the
+    NACK case below) it must reach the caller with the connection closed."""
+
+    reconnect_once_mock = AsyncMock()
+    timeout_error = ResponseTimeoutError(FunctionalDomain.IDENTIFICATION, 2, 5)
+
+    client.read_mac_address = AsyncMock()
+    client.wait_for_response = AsyncMock(side_effect=timeout_error)
+    client.stop_listen = Mock()
+
+    with patch(
+        "pyaprilaire.socket_client.SocketClient._reconnect_once",
+        new=reconnect_once_mock,
+    ):
+        with pytest.raises(ResponseTimeoutError) as exc_info:
+            await client.test_connection()
+
+    assert exc_info.value is timeout_error
+    assert client.stop_listen.call_count == 1
 
 
 async def test_test_connection_stops_listening_on_nack_error(client: AprilaireClient):
@@ -2150,3 +2210,29 @@ async def test_client_unsupported_attributes_survive_a_reconnect(
     client.protocol = client.create_protocol()
 
     assert not client.is_attribute_supported(FunctionalDomain.SENSORS, 1)
+
+
+async def test_reconnect_with_delay_logs_connection_lost(
+    client: AprilaireClient, caplog
+):
+    with (
+        patch("pyaprilaire.socket_client.SocketClient._reconnect", new=AsyncMock()),
+        caplog.at_level(logging.INFO, logger="pyaprilaire.client"),
+    ):
+        await client._reconnect_with_delay()
+
+    assert "Aprilaire connection lost" in caplog.text
+
+
+async def test_reconnect_with_delay_silent_for_auto_reconnect(
+    client: AprilaireClient, caplog
+):
+    client.auto_reconnecting = True
+
+    with (
+        patch("pyaprilaire.socket_client.SocketClient._reconnect", new=AsyncMock()),
+        caplog.at_level(logging.INFO, logger="pyaprilaire.client"),
+    ):
+        await client._reconnect_with_delay()
+
+    assert "Aprilaire connection lost" not in caplog.text

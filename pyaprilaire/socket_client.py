@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
-from logging import Logger
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class SocketClient:
@@ -16,7 +18,6 @@ class SocketClient:
         host: str,
         port: int,
         data_received_callback: Callable[[dict[str, Any]], None],
-        logger: Logger,
         reconnect_interval: int = None,
         retry_connection_interval: int = None,
     ) -> None:
@@ -24,7 +25,6 @@ class SocketClient:
         self.host = host
         self.port = port
         self.data_received_callback = data_received_callback
-        self.logger = logger
         self.reconnect_interval = reconnect_interval
         self.retry_connection_interval = retry_connection_interval
 
@@ -93,7 +93,6 @@ class SocketClient:
 
         self.state_changed()
 
-        # Ensure already disconnected
         self._disconnect()
 
         if connect_wait_period is not None and connect_wait_period > 0:
@@ -108,16 +107,12 @@ class SocketClient:
                 self.port,
             )
 
-            self.connected = True
-            self.reconnecting = False
-            self.auto_reconnecting = False
-
-            self.state_changed()
+            self._connection_established()
 
             asyncio.ensure_future(self._auto_reconnect_loop())
 
         except Exception as exc:  # pylint: disable=broad-except
-            self.logger.error("Failed to connect to thermostat: %s", str(exc))
+            _LOGGER.error("Failed to connect to thermostat: %s", str(exc))
 
             self.reconnecting = False
 
@@ -133,7 +128,6 @@ class SocketClient:
 
         self.state_changed()
 
-        # Ensure already disconnected
         self._disconnect()
 
         self.protocol = self.create_protocol()
@@ -143,6 +137,17 @@ class SocketClient:
             self.host,
             self.port,
         )
+
+        self._connection_established()
+
+    def _connection_established(self):
+        """Record a newly established connection.
+
+        The "connection made" line is skipped for the periodic reconnect of
+        `_auto_reconnect_loop`, which does not mean the connection was down.
+        """
+        if not self.auto_reconnecting:
+            _LOGGER.info("Aprilaire connection made")
 
         self.connected = True
         self.reconnecting = False

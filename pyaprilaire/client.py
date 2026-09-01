@@ -3,27 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from collections.abc import Awaitable, Callable
-from logging import Logger
 from typing import Any
 
 from .const import QUEUE_FREQUENCY, Action, Attribute, FunctionalDomain, NackStatus
 from .packet import NackPacket, Packet
 from .socket_client import SocketClient
 
-# Spec section F: CNT is 2 bytes (0-65535), so a complete frame is at most
-# CNT + 5 (REV, SEQ, CNT high/low, PAYLOAD, CRC) bytes. A receive buffer that
-# grows past this without ever containing a single complete frame can only be
-# a peer that isn't going to complete one (garbage on the wire, or a stalled
-# connection) - cap it there so such a peer can't grow the buffer forever.
+_LOGGER = logging.getLogger(__name__)
+
+# Spec section F: CNT is 2 bytes, so a complete frame is at most CNT + 5
+# (REV, SEQ, CNT high/low, PAYLOAD, CRC) bytes. A buffer past this holds no
+# complete frame and never will.
 MAX_BUFFER_SIZE = 65535 + 5
 
-# Spec section H.5 "Action in Case of NACK": these three status codes are the
-# only ones with an action of "Retry 2 additional times with 0.5 to 1 second
-# delay between retries and then clear the transaction from the queue."
-# Every other status code's action is just "Clear the transaction from the
-# queue" - i.e. give up immediately.
+# Spec section H.5 "Action in Case of NACK": the only status codes whose
+# action is to retry rather than to clear the transaction from the queue.
 RETRYABLE_NACK_STATUSES = frozenset(
     {
         NackStatus.GENERIC_ERROR,
@@ -32,39 +29,17 @@ RETRYABLE_NACK_STATUSES = frozenset(
     }
 )
 
-# Spec section H.5: "Retry 2 additional times" - i.e. up to 2 retries beyond
-# the original attempt (3 attempts total).
+# Spec section H.5: "Retry 2 additional times", i.e. 3 attempts in total.
 MAX_NACK_RETRIES = 2
 
 # Spec section H.5: "0.5 to 1 second delay between retries".
 NACK_RETRY_DELAY_RANGE = (0.5, 1.0)
 
-# The NACK status codes that mean a request will *never* succeed against this
-# particular device, as opposed to having failed this once. Only these three
-# say something about the device rather than about the request:
-#
-#   UNKNOWN_FUNCTIONAL_DOMAIN / UNKNOWN_ATTRIBUTE - the device's firmware has
-#     no such domain/attribute at all.
-#   UNSUPPORTED_MODEL - spec section H.5's own code for an attribute this
-#     model doesn't implement, even though the protocol defines it. This is
-#     what a thermostat without RAT/LAT sensors or written outdoor
-#     temperature support answers with.
-#
-# `AprilaireClient` remembers these (see its `unsupported_attributes`) and
-# stops re-requesting the attribute. Everything else is deliberately left
-# out, because caching it would disable a working attribute:
-#
-#   ATTRIBUTE_NOT_AVAILABLE_TRY_LATER - explicitly temporary.
-#   ATTRIBUTE_READ_ONLY / ATTRIBUTE_NOT_READABLE /
-#     ATTRIBUTE_NOT_WRITEABLE_IN_CURRENT_CONFIGURATION - direction- or
-#     configuration-specific. Reads and writes of one attribute share a
-#     cache key, so a write refused as read-only must not be taken to mean
-#     the attribute can't be read either.
-#   VALUE_OUT_OF_RANGE / INCORRECT_WRITE_DATA_LENGTH /
-#     INCORRECT_READ_DATA_LENGTH - a complaint about this one request's
-#     contents; the same attribute with different data may well be fine.
-#   The RETRYABLE_NACK_STATUSES above - transient by definition, and already
-#     retried before any NackError surfaces.
+# The NACK status codes that say the device does not implement an attribute
+# at all, as opposed to refusing this one request. `AprilaireClient` caches
+# these against the attribute (see `unsupported_attributes`) and stops asking;
+# every other status code is about the request, so caching it would disable a
+# working attribute.
 UNSUPPORTED_NACK_STATUSES = frozenset(
     {
         NackStatus.UNKNOWN_FUNCTIONAL_DOMAIN,
@@ -74,15 +49,20 @@ UNSUPPORTED_NACK_STATUSES = frozenset(
 )
 
 
-class NackError(Exception):
+class AprilaireResponseError(Exception):
+    """Base class for a request failing to produce response data.
+
+    The subclasses say why: `ResponseTimeoutError` for nothing coming back
+    in time, `NackError` for the thermostat rejecting the request.
+    """
+
+
+class NackError(AprilaireResponseError):
     """Raised to fail a `wait_for_response` future for a terminally-NACKed
     request.
 
-    Per spec section H.5, most NACK status codes mean the transaction is
-    simply cleared from the queue - the request has permanently failed and
-    will not be retried. The three codes that are retried
-    (`RETRYABLE_NACK_STATUSES`) only raise this once those retries are
-    exhausted. See `_AprilaireClientProtocol._handle_nack`.
+    Per spec section H.5 the request has permanently failed; the codes in
+    `RETRYABLE_NACK_STATUSES` raise this only once their retries are spent.
     """
 
     def __init__(self, status: NackStatus | None, raw_status: int) -> None:
@@ -99,153 +79,92 @@ class NackError(Exception):
 class UnsupportedAttributeError(NackError):
     """Raised for a request this device has already permanently refused.
 
-    Once a terminal NACK with one of `UNSUPPORTED_NACK_STATUSES` has proved
-    the thermostat doesn't implement an attribute, re-requesting it can only
-    produce the same NACK again - once per connection, forever, since
-    `_update_status` runs on every hourly reconnect. `AprilaireClient`
-    remembers those attributes and raises this instead of putting the
-    request on the wire.
-
-    The NACK that proves the point raises this as well, rather than a plain
-    `NackError`: the attribute is just as unsupported on the call that
-    discovers it as on every call after, so catching this type must not
-    depend on whether the answer came from the device or from the cache.
-
-    It subclasses `NackError`, carrying the status of the NACK behind it,
-    because it *is* that same failure. A caller handling `NackError`
-    therefore needs no changes. Note this is raised rather than signalled by
-    returning `None`: `None` already means "timed out" (see
-    `wait_for_response`), which is the opposite situation - a timed-out
-    request may still succeed on a retry, an unsupported one never will.
+    Once a terminal NACK with one of `UNSUPPORTED_NACK_STATUSES` proves the
+    thermostat doesn't implement an attribute, `AprilaireClient` raises this
+    instead of putting the request on the wire. The NACK that discovers it
+    raises this too, so catching the type doesn't depend on whether the
+    answer came from the device or from the cache. It carries the status of
+    the NACK behind it.
     """
 
 
+class ResponseTimeoutError(AprilaireResponseError):
+    """Raised when no response arrived for a request before its timeout.
+
+    A failure to hear back rather than a refusal, so the same request may
+    succeed later. Deliberately not a subclass of `asyncio.TimeoutError`,
+    which names a different class either side of Python 3.11 and would put a
+    protocol timeout inside every `except OSError` meant for the socket.
+    """
+
+    def __init__(
+        self,
+        functional_domain: FunctionalDomain,
+        attribute: int,
+        timeout: float | None,
+    ) -> None:
+        self.functional_domain = functional_domain
+        self.attribute = attribute
+        self.timeout = timeout
+
+        super().__init__(
+            f"Timed out after {timeout} seconds waiting for a response for "
+            f"{functional_domain.name} ({int(functional_domain)}), "
+            f"attribute {attribute}"
+        )
+
+
 # How long to wait for a COS Subscriptions read response (spec 7.1) before
-# giving up and falling back to writing the desired mask unconditionally.
-# Matches the timeout AprilaireClient.test_connection() uses for a similar
-# single read/response round trip.
+# falling back to writing the desired mask unconditionally.
 COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
 
-# Spec 7.1: the 29 COS Subscription bytes, in wire order, paired with this
-# library's desired subscription value for each.
-#
-# Per spec Appendix J.1: "All COS subscription outputs are enabled by
-# default, but can be disabled if unused to reduce network traffic."
-# Unlike the device's own all-enabled default, this library only enables a
-# channel it actually has a reason to want: either a `read_*`/`set_*`
-# method that consumes the resulting attribute, or one of spec Appendix
-# J's Best Practices items naming a channel as the *only* source for
-# information this library aims to support (even before a dedicated read
-# method exists for it). Every other channel defaults to off; a caller
-# that wants one anyway can turn it back on via the `overrides` argument
-# to `AprilaireClient.configure_cos`.
-#
-# Notes on specific bytes:
-#   0-4   Installer settings (thermostat, contractor, air cleaning,
-#         humidity control, fresh air) - disabled, nothing in this
-#         library reads them.
-#   5-9   Setpoint/mode, dehumidification, humidification, fresh air, and
-#         air cleaning settings back update_mode()/update_fan_mode()/
-#         update_setpoint()/set_dehumidification_setpoint()/
-#         set_humidification_setpoint()/set_fresh_air()/set_air_cleaning().
-#   10    Backs read_thermostat_iaq_available().
-#   11    Schedule Settings - without this, set_hold()/read_scheduling()
-#         are never told whether the user enabled/disabled the onboard
-#         schedule at the thermostat.
-#   12    Away Settings - disabled. Its data lives at SCHEDULING/2, which
-#         has no packet.py MAPPING entry yet, so enabling this channel
-#         would only make the thermostat send packets that
-#         Packet.parse silently drops before they ever reach a callback
-#         (see its unmapped functional_domain/attribute handling) - pure
-#         wasted traffic today, not just an unused one.
-#   13    Schedule Day - disabled, nothing in this library reads it.
-#   14    Schedule Hold backs set_hold()/read_scheduling().
-#   15    Heat Blast - disabled, nothing in this library reads it.
-#   16    Service Reminders Status - spec J.18: the only channel to
-#         monitor service reminder status. Kept on despite no dedicated
-#         read method, since a consuming app has no other way to ever
-#         see this data (spec Appendix J Best Practices item).
-#   17-18 Alerts Status/Settings - spec J.19: the only channel for hi/lo
-#         temperature and RH alerts. Same reasoning as 16.
-#   19    Backlight Settings - disabled, nothing in this library reads it.
-#   20    Thermostat Location & Name backs read_thermostat_name().
-#   21    Reserved - spec 7.1 defines no semantics for this byte. Paired
-#         with `None` instead of an Attribute: it never enters the
-#         current-vs-desired comparison in
-#         `AprilaireClient.configure_cos`, and the 0
-#         below is only ever sent as a structurally-required placeholder
-#         byte on a write triggered by some other channel's mismatch -
-#         never because byte 21 itself was judged wrong.
-#   22    Controlling Sensor Values backs read_sensors().
-#   23    Over the air ODT update timeout - spec J.15: the only
-#         notification that a written ODT
-#         (set_written_outdoor_temperature_value()) is more than 10
-#         minutes stale. Same reasoning as 16.
-#   24-25 Thermostat/IAQ Status back read_thermostat_status()/
-#         read_iaq_status().
-#   26    Model & Revision - disabled, nothing in this library reads it.
-#   27    Support Module - disabled; support module reads are out of
-#         scope for this library.
-#   28    Lockouts - disabled, nothing in this library reads it.
+# Spec 7.1: the 29 COS Subscription bytes in wire order, paired with the value
+# this library wants for each. The device enables every channel by default
+# (spec Appendix J.1); enabled here are only the channels a `read_*`/`set_*`
+# method consumes, plus bytes 16-18 and 23, which spec J.18/J.19/J.15 name as
+# the only source for data this library supports. Byte 21 is Reserved, hence
+# `None`. `AprilaireClient.configure_cos` overrides any of it.
 COS_SUBSCRIPTIONS = [
-    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 0),  # 0 Installer Thermostat Settings
-    (Attribute.COS_CONTRACTOR_INFORMATION, 0),  # 1 Contractor Information
-    (
-        Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS,
-        0,
-    ),  # 2 Air Cleaning Installer Variable
-    (
-        Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS,
-        0,
-    ),  # 3 Humidity Control Installer Settings
-    (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, 0),  # 4 Fresh Air Installer Settings
-    (
-        Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
-        1,
-    ),  # 5 Thermostat Setpoint & Mode Settings
-    (Attribute.COS_DEHUMIDIFICATION_SETPOINT, 1),  # 6 Dehumidification Setpoint
-    (Attribute.COS_HUMIDIFICATION_SETPOINT, 1),  # 7 Humidification Setpoint
-    (Attribute.COS_FRESH_AIR_SETTING, 1),  # 8 Fresh Air Setting
-    (Attribute.COS_AIR_CLEANING_SETTINGS, 1),  # 9 Air Cleaning Settings
-    (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, 1),  # 10 Thermostat IAQ Available
-    (Attribute.COS_SCHEDULE_SETTINGS, 1),  # 11 Schedule Settings
-    (Attribute.COS_AWAY_SETTINGS, 0),  # 12 Away Settings
-    (Attribute.COS_SCHEDULE_DAY, 0),  # 13 Schedule Day
-    (Attribute.COS_SCHEDULE_HOLD, 1),  # 14 Schedule Hold
-    (Attribute.COS_HEAT_BLAST, 0),  # 15 Heat Blast
-    (Attribute.COS_SERVICE_REMINDERS_STATUS, 1),  # 16 Service Reminders Status
-    (Attribute.COS_ALERTS_STATUS, 1),  # 17 Alerts Status
-    (Attribute.COS_ALERTS_SETTINGS, 1),  # 18 Alerts Settings
-    (Attribute.COS_BACKLIGHT_SETTINGS, 0),  # 19 Backlight Settings
-    (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, 1),  # 20 Thermostat Location & Name
-    (None, 0),  # 21 Reserved
-    (Attribute.COS_CONTROLLING_SENSOR_VALUES, 1),  # 22 Controlling Sensor Values
-    (
-        Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT,
-        1,
-    ),  # 23 Over the air ODT update timeout
-    (Attribute.COS_THERMOSTAT_STATUS, 1),  # 24 Thermostat Status
-    (Attribute.COS_IAQ_STATUS, 1),  # 25 IAQ Status
-    (Attribute.COS_MODEL_AND_REVISION, 0),  # 26 Model & Revision
-    (Attribute.COS_SUPPORT_MODULE, 0),  # 27 Support Module
-    (Attribute.COS_LOCKOUTS, 0),  # 28 Lockouts
+    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 0),
+    (Attribute.COS_CONTRACTOR_INFORMATION, 0),
+    (Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS, 0),
+    (Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS, 0),
+    (Attribute.COS_FRESH_AIR_INSTALLER_SETTINGS, 0),
+    (Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS, 1),
+    (Attribute.COS_DEHUMIDIFICATION_SETPOINT, 1),
+    (Attribute.COS_HUMIDIFICATION_SETPOINT, 1),
+    (Attribute.COS_FRESH_AIR_SETTING, 1),
+    (Attribute.COS_AIR_CLEANING_SETTINGS, 1),
+    (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, 1),
+    (Attribute.COS_SCHEDULE_SETTINGS, 1),
+    (Attribute.COS_AWAY_SETTINGS, 0),
+    (Attribute.COS_SCHEDULE_DAY, 0),
+    (Attribute.COS_SCHEDULE_HOLD, 1),
+    (Attribute.COS_HEAT_BLAST, 0),
+    (Attribute.COS_SERVICE_REMINDERS_STATUS, 1),
+    (Attribute.COS_ALERTS_STATUS, 1),
+    (Attribute.COS_ALERTS_SETTINGS, 1),
+    (Attribute.COS_BACKLIGHT_SETTINGS, 0),
+    (Attribute.COS_THERMOSTAT_LOCATION_AND_NAME, 1),
+    (None, 0),
+    (Attribute.COS_CONTROLLING_SENSOR_VALUES, 1),
+    (Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT, 1),
+    (Attribute.COS_THERMOSTAT_STATUS, 1),
+    (Attribute.COS_IAQ_STATUS, 1),
+    (Attribute.COS_MODEL_AND_REVISION, 0),
+    (Attribute.COS_SUPPORT_MODULE, 0),
+    (Attribute.COS_LOCKOUTS, 0),
 ]
 
-# The desired mask as a dict, for comparing against a read current mask and
-# for seeding the `overrides` merge in `AprilaireClient.configure_cos`.
-# Excludes byte 21 (Reserved has no Attribute) so it can never be looked up
-# or overridden.
+# The desired mask as a dict, excluding byte 21 (Reserved has no Attribute).
 DEFAULT_COS_SUBSCRIPTIONS: dict[Attribute, int] = {
     attribute: value for attribute, value in COS_SUBSCRIPTIONS if attribute is not None
 }
 
-# Attributes whose support varies by thermostat model, paired with the
-# attribute `AprilaireClient` reports their availability under. Not every
-# model has RAT/LAT sensors (spec 5.1) or accepts a written outdoor
-# temperature (spec 5.4); one that doesn't answers a read with a NACK rather
-# than with data, so a consumer left waiting on the values alone can't tell
-# an unsupported model from one that simply hasn't replied yet. See
-# `AprilaireClient._set_availability`.
+# Attributes whose support varies by thermostat model (spec 5.1 RAT/LAT
+# sensors, spec 5.4 written outdoor temperature), paired with the attribute
+# `AprilaireClient` reports their availability under. A model without them
+# answers a read with a NACK rather than with data.
 AVAILABILITY_ATTRIBUTES: dict[tuple[FunctionalDomain, int], Attribute] = {
     (FunctionalDomain.SENSORS, 1): Attribute.SENSOR_VALUES_AVAILABLE,
     (FunctionalDomain.SENSORS, 4): Attribute.WRITTEN_OUTDOOR_TEMPERATURE_AVAILABLE,
@@ -260,24 +179,16 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         data_received_callback: Callable[
             [FunctionalDomain, int, dict[str, Any], int | None], None
         ],
-        logger: Logger,
         reconnect_action: Callable[[], Awaitable[None]] | None = None,
         connected_action: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize the protocol"""
         self.data_received_callback = data_received_callback
         self.reconnect_action = reconnect_action
-        self.logger = logger
 
-        # Called once the socket is up and the send queue is running, so
-        # the owning client can run whatever request sequence it wants on a
-        # fresh connection (see AprilaireClient._update_status). The
-        # counterpart to `reconnect_action`, which this class already fires
-        # from `connection_lost`: deciding *which* requests a new
-        # connection should make, and in what order, is client policy - all
-        # this class knows is how to put a packet on the wire. `None` (as
-        # for a caller that constructs this protocol directly, e.g. tests)
-        # just means connecting only starts the queue loop.
+        # Called once the socket is up and the send queue is running, so the
+        # owning client can run its own request sequence on a fresh
+        # connection. `None` means connecting only starts the queue loop.
         self.connected_action = connected_action
 
         self.transport: asyncio.Transport = None
@@ -286,25 +197,12 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         self.sequence = 0
 
-        # The most recently sent packet for each sequence number, paired
-        # with how many times it has been retried in response to a NACK, so
-        # that a NACK - which only carries the sequence number of the
-        # request that caused it - can be attributed back to that request:
-        # to retry it (spec section H.5; section F note 3 requires reusing
-        # the original sequence number) and/or to know which
-        # (functional_domain, attribute) key a terminal NACK should fail.
-        # See `_handle_nack`.
-        #
-        # Bounded by sequence-number reuse: `_get_sequence` cycles sequence
-        # numbers through 0-127, so sending a new request eventually
-        # overwrites whatever was previously recorded here for that
-        # sequence number, capping this dict at 128 entries. A successful
-        # (non-NACK) response also pops its entry immediately, see
-        # `data_received`.
+        # The most recently sent packet for each sequence number, with its
+        # NACK retry count, so `_handle_nack` can attribute a NACK back to
+        # the request that caused it. Bounded at 128 entries by
+        # `_get_sequence` cycling sequence numbers through 0-127.
         self._in_flight_requests: dict[int, tuple[Packet, int]] = {}
 
-        # Bytes received but not yet resolved into complete frames, see
-        # `data_received`.
         self._receive_buffer = bytearray()
 
     def _get_sequence(self):
@@ -319,14 +217,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         packet.sequence = self._get_sequence()
 
         self._in_flight_requests[packet.sequence] = (packet, 0)
-
-        self.logger.debug(
-            "Queuing data, sequence=%d, action=%s, functional_domain=%s, attribute=%d",
-            packet.sequence,
-            str(packet.action),
-            str(packet.functional_domain),
-            packet.attribute,
-        )
 
         await self.packet_queue.put(packet)
 
@@ -354,13 +244,11 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                         try:
                             serialized_packet = packet.serialize()
 
-                            self.logger.info(
-                                "Sent data: %s", serialized_packet.hex(" ")
-                            )
+                            _LOGGER.debug("Sent data: %s", serialized_packet.hex(" "))
 
                             self.transport.write(serialized_packet)
                         except Exception:
-                            self.logger.exception(
+                            _LOGGER.exception(
                                 "Failed to send packet, action=%s, "
                                 "functional_domain=%s, attribute=%s",
                                 packet.action,
@@ -374,13 +262,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def connection_made(self, transport: asyncio.Transport):
         """Called when a connection has been made to the socket"""
-        self.logger.info("Aprilaire connection made")
-
         self.transport = transport
         self._empty_packet_queue()
 
-        # A reconnect must not inherit a partial frame left over from
-        # whatever connection preceded this one.
         self._receive_buffer = bytearray()
 
         asyncio.ensure_future(self._queue_loop())
@@ -392,11 +276,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Buffer newly-received bytes and parse whatever complete frames
         that leaves available.
 
-        A single TCP read can contain several frames, or only part of one -
-        the socket gives no guarantee that frame boundaries line up with
-        read boundaries. `Packet.get_parseable_length` tells us how much of
-        the accumulated buffer is made up of complete frames; anything past
-        that is a partial frame and stays buffered for the next call.
+        A single TCP read can contain several frames, or only part of one, so
+        a trailing partial frame stays buffered for the next call.
         """
         self._receive_buffer.extend(data)
 
@@ -404,16 +285,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         if parseable_length == 0:
             if len(self._receive_buffer) > MAX_BUFFER_SIZE:  # pragma: no cover
-                # Unreachable given get_parseable_length's contract: a
-                # frame's declared length is capped at MAX_BUFFER_SIZE (CNT
-                # is at most 65535), so a buffer longer than that always
-                # has a resolvable frame boundary at its start, making
-                # parseable_length == 0 impossible here. Kept as a guard in
-                # case that contract ever changes.
-                self.logger.error(
-                    "Discarding %d bytes without a complete frame",
-                    len(self._receive_buffer),
-                )
+                # Unreachable while get_parseable_length always finds a
+                # frame boundary in a buffer this long.
                 self._receive_buffer = bytearray()
 
             return []
@@ -425,40 +298,24 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
-        self.logger.info("Aprilaire data received %s", data.hex(" "))
+        _LOGGER.debug("Aprilaire data received %s", data.hex(" "))
 
         try:
             parsed_packets = self._parse_received_data(data)
         except Exception:
-            # Whatever went wrong, it must not propagate out of this
-            # callback: asyncio's transport treats any exception escaping
-            # data_received as fatal and closes the connection (see
-            # asyncio/selector_events.py's _read_ready__data_received).
-            self.logger.exception("Failed to parse received data")
+            # asyncio's transport closes the connection on any exception
+            # escaping data_received, so nothing may propagate out of here.
+            _LOGGER.exception("Failed to parse received data")
             return
 
         for packet in parsed_packets:
-            self.logger.debug(
-                "Received data, action=%s, functional_domain=%s, attribute=%d",
-                str(packet.action),
-                str(packet.functional_domain),
-                packet.attribute,
-            )
-
             if isinstance(packet, NackPacket):
                 self._handle_nack(packet)
                 continue
 
-            # This packet is a genuine (non-NACK) response, so whatever
-            # request shares its sequence number - if any - has succeeded.
-            # See `_in_flight_requests`.
+            # A non-NACK response means the request sharing its sequence
+            # number succeeded.
             self._in_flight_requests.pop(packet.sequence, None)
-
-            if Attribute.ERROR in packet.data:
-                error = packet.data[Attribute.ERROR]
-
-                if error != 0:
-                    self.logger.error("Thermostat error: %d", error)
 
             if (
                 packet.action == Action.COS
@@ -466,8 +323,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 and packet.attribute == 1
                 and packet.data.get(Attribute.MODE) == 1
             ):
-                self.logger.info("Re-reading control because of COS with mode==1")
-
                 asyncio.ensure_future(self.read_control())
 
                 continue
@@ -486,14 +341,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Handle a NACK per spec section H.5's "Action in Case of NACK"
         column.
 
-        `packet.status_code` is the raw STATUS CODE byte of the FUNCTIONAL
-        DOMAIN / STATUS CODE field (spec section G). This is where it is
-        turned into something meaningful: a `NackStatus`, used to decide
-        whether to retry the request that caused it, and to fail that
-        request's `wait_for_response` future promptly when it will not be
-        retried (or when retries are exhausted) rather than leaving the
-        caller to wait out its full timeout only to receive an unexplained
-        `None`.
+        Decodes `packet.status_code` into a `NackStatus`, retries the request
+        if the spec calls for it, and otherwise fails that request's
+        `wait_for_response` future rather than letting it time out.
         """
         raw_status = packet.status_code
 
@@ -508,7 +358,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             original_packet, retry_count = in_flight
 
             if status in RETRYABLE_NACK_STATUSES and retry_count < MAX_NACK_RETRIES:
-                self.logger.error(
+                _LOGGER.error(
                     "Received NACK: %s, sequence=%d - retrying (%d/%d)",
                     status.name,
                     packet.sequence,
@@ -524,7 +374,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                 asyncio.ensure_future(self._retry_packet(original_packet))
                 return
 
-        self.logger.error(
+        _LOGGER.error(
             "Received NACK: %s, sequence=%d",
             status.name if status is not None else f"unknown status 0x{raw_status:02X}",
             packet.sequence,
@@ -535,13 +385,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         original_packet, _ = in_flight
 
-        # Fail the pending `wait_for_response` future (if any) for the
-        # request this NACK terminally failed, rather than leaving it to
-        # time out. `NackError` is only ever meant to reach
-        # `AprilaireClient.data_received`, which recognizes it and calls
-        # `future.set_exception` instead of `future.set_result` - it is
-        # never handed to the user-supplied `data_received_callback` as if
-        # it were response data.
+        # `AprilaireClient.data_received` recognizes this `NackError` and
+        # fails the pending future rather than reporting it as response data.
         asyncio.ensure_future(
             self.data_received_callback(
                 original_packet.functional_domain,
@@ -555,18 +400,14 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Retry a NACKed packet per spec section H.5.
 
         Spec section F note 3: "Retries of a packet will use the same
-        sequence number as the initial packet" - so `packet` (whose
-        `.sequence` is already set from the original send) is re-queued
-        as-is rather than going through `_send_packet`, which would
-        allocate a new sequence number.
+        sequence number as the initial packet", so the packet is re-queued
+        as-is rather than going through `_send_packet`.
         """
         await asyncio.sleep(random.uniform(*NACK_RETRY_DELAY_RANGE))
         await self.packet_queue.put(packet)
 
     def connection_lost(self, exc: Exception | None) -> None:
         """Called when the connection to the socket has been lost"""
-        self.logger.info("Aprilaire connection lost")
-
         if self.data_received_callback:
             asyncio.ensure_future(
                 self.data_received_callback(
@@ -576,8 +417,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
         self.transport = None
 
-        # Don't let a frame that was only half-received on this connection
-        # bleed into whatever gets received after a reconnect.
         self._receive_buffer = bytearray()
 
         if self.reconnect_action:
@@ -745,14 +584,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
     async def write_cos_subscriptions(self, subscriptions: dict[Attribute, int]):
         """Write the COS subscription mask (spec 7.1).
 
-        `subscriptions` supplies the value for each of the 28 named
-        channels; they are laid out in the wire order spec 7.1 defines
-        (`COS_SUBSCRIPTIONS`). Byte 21 is Reserved - spec 7.1 defines no
-        semantics for it - so it isn't part of `subscriptions` and is
-        emitted as a structurally-required placeholder `0`.
-
-        Whether a write is warranted at all is not this method's business;
-        see `AprilaireClient.configure_cos`.
+        `subscriptions` supplies the value for each of the 28 named channels,
+        laid out in the wire order of `COS_SUBSCRIPTIONS`. Byte 21 is
+        Reserved and is emitted as a placeholder `0`.
         """
         raw_data = [
             0 if attribute is None else subscriptions[attribute]
@@ -796,14 +630,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Send a request to update the written outdoor temperature value
         (spec 5.4).
 
-        `value` is degrees Celsius and may carry a half degree; it is passed
-        through untouched, because `Packet._encode_temperature` is the single
-        place that knows temperatures are quantized to half degrees. Rounding
-        here as well would make this setter disagree with every other
-        temperature write in the library about what, say, 21.3 means.
-
-        Spec 5.4 requires the status byte of a write to be 0; the thermostat
-        keeps reporting the real status on reads.
+        `value` is degrees Celsius and may carry a half degree; it is packed
+        by `Packet._encode_temperature`, so callers shouldn't pre-round it.
+        Spec 5.4 requires the status byte of a write to be 0.
         """
         await self._send_packet(
             Packet(
@@ -844,7 +673,6 @@ class AprilaireClient(SocketClient):
         host: str,
         port: int,
         data_received_callback: Callable[[dict[str, Any]], None],
-        logger: Logger,
         reconnect_interval: int = None,
         retry_connection_interval: int = None,
     ) -> None:
@@ -854,50 +682,41 @@ class AprilaireClient(SocketClient):
             host,
             port,
             data_received_callback,
-            logger,
             reconnect_interval,
             retry_connection_interval,
         )
 
         # Each entry pairs a waiter's future with the sequence number (spec
-        # section F notes 2-3) of the request it is waiting on, captured at
-        # `wait_for_response` time - or None if no such request could be
-        # found, in which case the future is only ever matched by
-        # (functional_domain, attribute), same as before sequence tracking
-        # existed. See `data_received` for how that pairing is used to
-        # decide which incoming packet, if any, resolves a given future.
+        # section F notes 2-3) of the request it is waiting on, or None to
+        # match on (functional_domain, attribute) alone.
         self.futures: dict[
             tuple[FunctionalDomain, int], list[tuple[asyncio.Future, int | None]]
         ] = {}
 
         # Attributes this thermostat has proved it doesn't implement, mapped
-        # to the terminal NACK that proved it (see
-        # `UNSUPPORTED_NACK_STATUSES`). Requesting one of these again can
-        # only earn the same NACK, so the gated methods raise
-        # `UnsupportedAttributeError` - built from the recorded NACK's own
-        # status - instead of sending.
-        #
-        # This lives on the client rather than on the protocol because
-        # `SocketClient._reconnect` builds a *new* protocol object for every
-        # connection: a protocol-held cache would be discarded on each
-        # hourly reconnect, which is precisely the repeated probing this
-        # exists to stop. Which attributes a device supports is a property
-        # of the device, so it outlives any one connection.
+        # to the terminal NACK that proved it. Held here rather than on the
+        # protocol, which is rebuilt on every reconnect.
         self.unsupported_attributes: dict[tuple[FunctionalDomain, int], NackError] = {}
 
-        # The last availability value reported through
-        # `data_received_callback` for each key of `AVAILABILITY_ATTRIBUTES`,
-        # so availability is pushed on a change rather than on every
-        # response and COS for a supported attribute.
+        # The last availability reported for each key of
+        # `AVAILABILITY_ATTRIBUTES`, so it is pushed only on a change.
         self._reported_availability: dict[tuple[FunctionalDomain, int], bool] = {}
 
     async def _reconnect_with_delay(self):
+        """Reconnect after a lost connection.
+
+        Wired in as the protocol's `reconnect_action`. Only a real
+        disconnect is logged, not the periodic reconnect of
+        `SocketClient._auto_reconnect_loop`, which sets `auto_reconnecting`.
+        """
+        if not self.auto_reconnecting:
+            _LOGGER.info("Aprilaire connection lost")
+
         await super()._reconnect(self.retry_connection_interval)
 
     def create_protocol(self):
         return _AprilaireClientProtocol(
             self.data_received,
-            self.logger,
             self._reconnect_with_delay,
             self.connection_made,
         )
@@ -905,11 +724,8 @@ class AprilaireClient(SocketClient):
     async def connection_made(self):
         """Called when a connection to the thermostat has been made.
 
-        The client-side counterpart to
-        `_AprilaireClientProtocol.connection_made`, which fires this as its
-        `connected_action` - the same pairing as the protocol's
-        `data_received` and this class's. Everything a fresh connection
-        should do hangs off here.
+        Fired by `_AprilaireClientProtocol.connection_made` as its
+        `connected_action`.
         """
         await self._update_status()
 
@@ -929,10 +745,8 @@ class AprilaireClient(SocketClient):
         await self.read_thermostat_iaq_available()  # spec Appendix J.4
         await self.read_sensors()
 
-        # Both are model-dependent (see `AVAILABILITY_ATTRIBUTES`), so they
-        # are asked for only until the thermostat says it doesn't have them.
-        # Checking rather than catching keeps an unsupported model from
-        # aborting the rest of this bootstrap.
+        # Model-dependent (see `AVAILABILITY_ATTRIBUTES`); checking rather
+        # than catching keeps an unsupported model from aborting the rest.
         if self.is_attribute_supported(FunctionalDomain.SENSORS, 1):
             await self.read_sensor_values()
 
@@ -955,36 +769,25 @@ class AprilaireClient(SocketClient):
     ):
         """Called when data is received from the thermostat"""
 
-        # A `NackError` means the request identified by `functional_domain`,
-        # `attribute`, and `sequence` was terminally NACKed (see
-        # `_AprilaireClientProtocol._handle_nack`) - it is only meant to
-        # fail a matching `wait_for_response` future below, not to be
+        # A `NackError` fails a matching future below rather than being
         # reported as response data to the user-supplied callback.
         is_nack_error = isinstance(data, NackError)
 
         if is_nack_error:
-            # A NACK that proves the attribute unsupported fails this
-            # request as `UnsupportedAttributeError` too, not just every
-            # later one - otherwise the single call that discovers the
-            # attribute is missing raises a different type from all the
-            # calls after it, and a caller catching the subclass silently
-            # misses the discovery.
+            # The call that discovers the attribute is missing must raise
+            # the same type as every call after it.
             data = self._record_unsupported_attribute(
                 functional_domain, attribute, data
             )
         else:
-            # Anything at all coming back for one of these attributes - a
-            # read response or an unsolicited COS - proves the thermostat
-            # implements it.
+            # Anything coming back for one of these attributes, response or
+            # COS, proves the thermostat implements it.
             self._set_availability(functional_domain, attribute, True)
 
             self.data_received_callback(data)
 
-        # `FunctionalDomain.NONE` and attribute 0 are both real, meaningful
-        # values (e.g. attribute 0 is used by a mapped response) - only the
-        # complete absence of a domain/attribute (as in the connection-state
-        # callbacks below, or a caller with nothing to report) should skip
-        # future resolution.
+        # `FunctionalDomain.NONE` and attribute 0 are both real values, so
+        # only their complete absence skips future resolution.
         if functional_domain is None or attribute is None:
             return
 
@@ -995,18 +798,10 @@ class AprilaireClient(SocketClient):
         unresolved_entries = []
 
         for future, expected_sequence in pending_entries:
-            # A future that captured a specific expected sequence number is
-            # pinned to the single request that created it - only a
-            # response (or NACK) carrying that same sequence number may
-            # resolve it. This is what stops an unsolicited COS on the same
-            # (functional_domain, attribute) from resolving a future meant
-            # for a read response (spec section H.4): a device-originated
-            # COS carries a sequence number in the thermostat's 128-255
-            # range (spec section F note 1), which never matches a
-            # 0-127 sequence we generated for our own request. It's also
-            # what lets two concurrent requests for the same key be
-            # resolved independently instead of both being satisfied by
-            # whichever response happens to arrive first.
+            # A future carrying an expected sequence number is pinned to the
+            # one request that created it, so an unsolicited COS (spec
+            # section H.4, sequence 128-255 per section F note 1) cannot
+            # resolve a wait meant for a read response.
             if expected_sequence is not None and expected_sequence != sequence:
                 unresolved_entries.append((future, expected_sequence))
                 continue
@@ -1032,30 +827,17 @@ class AprilaireClient(SocketClient):
         implement, so it is never requested again.
 
         Only the statuses in `UNSUPPORTED_NACK_STATUSES` say anything about
-        the device; every other NACK is about this one request and leaves
-        the attribute's support unknown, so it is logged by the protocol and
-        otherwise ignored here.
+        the device; every other NACK is ignored here.
 
         Returns the error that should fail this request's pending
         `wait_for_response`: `nack_error` unchanged, or an
-        `UnsupportedAttributeError` carrying the same status when this NACK
-        is the one that proved the attribute unsupported - so that the
-        discovering call and every cached refusal after it raise the same
-        type.
+        `UnsupportedAttributeError` when this NACK is the one that proved the
+        attribute unsupported.
         """
         if nack_error.status not in UNSUPPORTED_NACK_STATUSES:
             return nack_error
 
         key = (functional_domain, attribute)
-
-        if key not in self.unsupported_attributes:
-            self.logger.warning(
-                "Thermostat does not support %s, %d (%s); it will not be "
-                "requested again",
-                int(functional_domain),
-                attribute,
-                nack_error.status.name,
-            )
 
         unsupported_error = UnsupportedAttributeError(
             nack_error.status, nack_error.raw_status
@@ -1076,11 +858,9 @@ class AprilaireClient(SocketClient):
         """Report whether a model-dependent attribute is available, if that
         has changed since it was last reported.
 
-        Only the attributes named in `AVAILABILITY_ATTRIBUTES` are reported;
-        for anything else this is a no-op. Nothing is reported until the
-        thermostat has answered one way or the other, so a consumer that
-        merges these dicts simply has no key yet while support is unknown -
-        distinct from a definite `False`.
+        A no-op for anything outside `AVAILABILITY_ATTRIBUTES`. Nothing is
+        reported until the thermostat has answered, so a consumer has no key
+        at all while support is unknown, as distinct from a `False`.
         """
         availability_attribute = AVAILABILITY_ATTRIBUTES.get(
             (functional_domain, attribute)
@@ -1104,12 +884,8 @@ class AprilaireClient(SocketClient):
         """Whether this thermostat may still be sent requests for an
         attribute.
 
-        `False` only once a terminal NACK has proved it isn't implemented
-        (see `unsupported_attributes`); an attribute that has never been
-        requested is optimistically `True`, since the only way to find out
-        is to ask. Callers that would rather handle the failure than check
-        first can just call the request method and catch
-        `UnsupportedAttributeError`.
+        `False` only once a terminal NACK has proved it isn't implemented;
+        an attribute that has never been requested is optimistically `True`.
         """
         return (functional_domain, attribute) not in self.unsupported_attributes
 
@@ -1118,10 +894,8 @@ class AprilaireClient(SocketClient):
     ) -> None:
         """Raise rather than send a request this device has already refused.
 
-        The raised `UnsupportedAttributeError` carries the status of the
-        NACK that originally proved the attribute unsupported, so a caller
-        sees the same failure it would have seen from the device - just
-        without the round trip.
+        The raised `UnsupportedAttributeError` carries the status of the NACK
+        that originally proved the attribute unsupported.
         """
         nack_error = self.unsupported_attributes.get((functional_domain, attribute))
 
@@ -1148,15 +922,8 @@ class AprilaireClient(SocketClient):
 
             await self.read_mac_address_and_wait(5)
         finally:
-            # The device only accepts one home automation connection at a
-            # time (see the README), so this connection must be closed on
-            # every exit path - a failed `start_listen_once`, a NACKed read
-            # propagating a `NackError` out of `wait_for_response`, or
-            # success - not just the success path. Otherwise this "test the
-            # connection" helper would be exactly what leaks the single
-            # connection slot. `stop_listen` tolerates being called when no
-            # connection was ever established (`_disconnect` only closes a
-            # transport that actually exists).
+            # The device accepts only one home automation connection at a
+            # time (see the README), so every exit path must close this one.
             self.stop_listen()
 
     async def wait_for_response(
@@ -1168,39 +935,15 @@ class AprilaireClient(SocketClient):
     ):
         """Wait for a response for a particular request.
 
-        If `sequence` is given, this wait only resolves for a response (or
-        NACK) carrying that exact sequence number - use this when the wait
-        corresponds to a specific outgoing request (see
-        `read_mac_address_and_wait` and its siblings, which pass the value
-        their own send just returned; prefer those over calling this
-        directly whenever there's a specific request to wait on). Passing
-        a stale or otherwise wrong sequence number silently waits on the
-        wrong request - there's no way for this method to detect that,
-        since it has no way to tell "your" request apart from anyone
-        else's.
+        With `sequence`, the wait resolves only for a response or NACK
+        carrying that exact sequence number; the `read_*_and_wait` methods
+        pass the value their own send returned. Without it, the wait resolves
+        on the next response for `(functional_domain, attribute)` whatever
+        caused it, including an unsolicited COS (spec section H.4).
 
-        If `sequence` is omitted (the default, `None`), this resolves on
-        the next response for `(functional_domain, attribute)` regardless
-        of which request caused it - including an unsolicited COS (spec
-        section H.4). Use this only when that's actually what's wanted
-        (e.g. observing the next update to a value, not correlating a
-        specific request's answer).
-
-        Returns the response data, `None` on timeout (as before), or raises
-        `NackError` if the request was terminally NACKed - a status code the
-        spec doesn't call for retrying (spec section H.5), or one that was
-        retried and still NACKed after exhausting its retries. This is
-        deliberately distinct from the `None` timeout return: `None` means
-        "no answer arrived in time" (the request may yet succeed, or may
-        already be queued for a NACK retry), while `NackError` means the
-        thermostat explicitly, and permanently, rejected the request - a
-        caller needs to be able to tell those apart to react correctly
-        (e.g. surface a rejected setpoint write to a user, versus silently
-        retrying a slow poll). Raising also lets a caller ignore the
-        distinction entirely with a bare `except NackError`, rather than
-        having to inspect a returned status for every call site - and
-        existing callers that only ever saw `None` keep working unchanged
-        for the timeout case.
+        Returns the response data, or raises `ResponseTimeoutError` if none
+        arrived within `timeout` and `NackError` if the request was
+        terminally NACKed.
         """
 
         loop = asyncio.get_event_loop()
@@ -1214,27 +957,14 @@ class AprilaireClient(SocketClient):
 
         try:
             return await asyncio.wait_for(future, timeout)
-        except asyncio.exceptions.TimeoutError:
-            self.logger.error(
-                "Hit timeout of %d waiting for %s, %d",
-                timeout,
-                int(functional_domain),
-                attribute,
-            )
-            return None
-        except NackError as exc:
-            self.logger.error(
-                "Received NACK waiting for %s, %d: %s",
-                int(functional_domain),
-                attribute,
-                exc,
-            )
-            raise
+        except asyncio.exceptions.TimeoutError as exc:
+            # Not logged: only the caller knows whether a missed response
+            # matters. A `NackError` propagates from the future as-is and is
+            # logged by `_AprilaireClientProtocol._handle_nack`.
+            raise ResponseTimeoutError(functional_domain, attribute, timeout) from exc
         finally:
-            # Whether resolved, timed out, or cancelled, this entry must not
-            # linger in self.futures - otherwise a timed-out wait leaves a
-            # stale entry behind forever (data_received only pops entries
-            # when a matching response actually arrives).
+            # data_received only pops entries a response resolves, so a
+            # timed-out or cancelled wait has to clean up after itself.
             pending_entries = self.futures.get(future_key)
 
             if pending_entries is not None:
@@ -1261,13 +991,9 @@ class AprilaireClient(SocketClient):
     async def read_sensor_values(self):
         """Send a request for the full sensor values array (spec 5.1).
 
-        This is the only source for the sensors that aren't part of the
-        controlling set - notably RAT and LAT - as well as the per-sensor
-        status bytes saying which of them are installed at all.
-
-        Spec 5.1 is not COS-capable, so the thermostat never volunteers an
-        update: whatever cadence a consumer wants, it gets by calling this
-        again. This library only reads it on connect.
+        The only source for the non-controlling sensors (notably RAT and LAT)
+        and the per-sensor installed status. Spec 5.1 is not COS-capable, so
+        a consumer wanting updates has to call this again.
 
         Raises `UnsupportedAttributeError` on a model that has already
         refused it; see `is_attribute_supported`.
@@ -1287,10 +1013,8 @@ class AprilaireClient(SocketClient):
     async def read_written_outdoor_temperature(self):
         """Send a request for the written outdoor temperature value (spec 5.4).
 
-        Worth reading on connect as well as after a write: the status byte
-        is how the thermostat reports that a previously written value has
-        gone stale, which a client that has just reconnected would otherwise
-        have no way to notice.
+        Worth reading on connect as well as after a write, since the status
+        byte is how a previously written value is reported as stale.
 
         Raises `UnsupportedAttributeError` on a model that has already
         refused it; see `is_attribute_supported`.
@@ -1397,20 +1121,11 @@ class AprilaireClient(SocketClient):
 
         `value` is degrees Celsius and may carry a half degree; it is packed
         by `Packet._encode_temperature`, so callers shouldn't pre-round it.
-
         Spec 5.4 wants this refreshed more often than every ten minutes, or
         the thermostat marks the value stale.
 
         Raises `UnsupportedAttributeError` on a model that has already
-        refused this attribute - in either direction, since the three
-        statuses that get remembered (`UNSUPPORTED_NACK_STATUSES`) all mean
-        the device has no such attribute at all rather than that it declined
-        this particular request.
-
-        The read-back is composed here rather than in the protocol - unlike
-        `set_dehumidification_setpoint` and `set_humidification_setpoint`,
-        which do it a layer down - so that it goes through
-        `read_written_outdoor_temperature` and honours the same gate.
+        refused this attribute, for a read or a write alike.
         """
         self._raise_if_unsupported(FunctionalDomain.SENSORS, 4)
 
@@ -1468,27 +1183,14 @@ class AprilaireClient(SocketClient):
     async def configure_cos(self, overrides: dict[Attribute, int] | None = None):
         """Configure which COS subscriptions (spec 7.1) the thermostat sends.
 
-        Per spec Appendix J.1, the recommended sequence is: "Use the COS
-        Subscriptions attribute to read the current COS subscription
-        settings" and then, only "if it is desired to enable or [disable]
-        specific COS messages", write the new settings. The mask is device
-        configuration (spec 7.1 calls it read/write, not a one-shot
-        command), so writing it unconditionally on every connect -
-        including the hourly reconnect - means roughly 24 needless writes a
-        day, and risks clobbering a mask some other tool set on purpose.
-        This method reads first and only writes when the desired mask
-        actually differs from what the thermostat reports.
+        Reads the current mask first, per spec Appendix J.1, and writes only
+        when the desired mask differs from what the thermostat reports. If
+        the read times out the current mask is unknown, so the desired one is
+        written unconditionally.
 
-        If the read times out, the current mask is unknown, so the desired
-        one is written unconditionally rather than leaving the thermostat
-        in a state this library can't work with.
-
-        `overrides` lets a caller adjust individual channels away from this
-        library's defaults (`DEFAULT_COS_SUBSCRIPTIONS`) - for example to
-        enable a channel this library leaves off, or disable one it doesn't
-        use to reduce network traffic, per spec Appendix J.1. Byte 21 is
-        Reserved (spec 7.1 defines no semantics for it) and is never part
-        of the desired mask, so it can't be set here.
+        `overrides` adjusts individual channels away from
+        `DEFAULT_COS_SUBSCRIPTIONS`. Byte 21 is Reserved and is never part of
+        the desired mask, so it can't be set here.
         """
         desired = dict(DEFAULT_COS_SUBSCRIPTIONS)
 
@@ -1501,16 +1203,18 @@ class AprilaireClient(SocketClient):
                 }
             )
 
-        current = await self.read_cos_subscriptions_and_wait(
-            COS_SUBSCRIPTIONS_READ_TIMEOUT
-        )
+        try:
+            current = await self.read_cos_subscriptions_and_wait(
+                COS_SUBSCRIPTIONS_READ_TIMEOUT
+            )
+        except ResponseTimeoutError:
+            # With the current mask unknown, this falls through to writing
+            # the desired one unconditionally.
+            current = None
 
         if current is not None and all(
             current.get(attribute) == value for attribute, value in desired.items()
         ):
-            self.logger.debug(
-                "COS subscriptions already match the desired state; skipping write"
-            )
             return
 
         await self.protocol.write_cos_subscriptions(desired)
