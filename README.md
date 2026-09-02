@@ -12,7 +12,7 @@ In order to connect to the thermostat, you will need to enable automation mode. 
 
 # Development
 
-pyaprilaire requires Python 3.14 or later, matching the minimum supported by Home Assistant.
+pyaprilaire requires Python 3.14 or later.
 
 ## Linting
 
