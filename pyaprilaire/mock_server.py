@@ -1,7 +1,5 @@
 """Mock server for testing Aprilaire integration"""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging
@@ -98,7 +96,7 @@ def _describe_nack_status(status_code: int) -> str:
 
 class _AprilaireServerProtocol(asyncio.Protocol):
     def __init__(self):
-        self.transport: asyncio.Transport = None
+        self.transport: asyncio.Transport | None = None
 
         self.mode = HvacMode.AUTO
         self.fan_mode = FanMode.AUTO
@@ -1016,7 +1014,7 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self.outdoor_sensor_value = packet.data.get(Attribute.OUTDOOR_SENSOR)
 
         self._cancel_written_outdoor_timeout()
-        self.written_outdoor_timeout_handle = asyncio.get_event_loop().call_later(
+        self.written_outdoor_timeout_handle = asyncio.get_running_loop().call_later(
             WRITTEN_OUTDOOR_TIMEOUT_SECONDS,
             self._expire_written_outdoor_temperature,
         )
