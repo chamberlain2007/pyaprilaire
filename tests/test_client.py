@@ -1397,7 +1397,7 @@ async def test_client_wait_for_response_timeout(client: AprilaireClient):
     returning `None`: a caller that forgets to check a return value would
     otherwise carry on as though the missing response were data."""
 
-    wait_for_mock = AsyncMock(side_effect=asyncio.exceptions.TimeoutError)
+    wait_for_mock = AsyncMock(side_effect=TimeoutError)
 
     with patch("asyncio.wait_for", new=wait_for_mock):
         with pytest.raises(ResponseTimeoutError) as exc_info:
@@ -1424,8 +1424,8 @@ def test_response_timeout_error_hierarchy():
     assert not isinstance(timeout_error, NackError)
     assert not isinstance(nack_error, ResponseTimeoutError)
 
-    # Not an `asyncio.TimeoutError`/`OSError` - see the class docstring.
-    assert not isinstance(timeout_error, asyncio.exceptions.TimeoutError)
+    # Not a `TimeoutError`, and so not an `OSError` - see the class docstring.
+    assert not isinstance(timeout_error, TimeoutError)
 
     assert "CONTROL" in str(timeout_error)
     assert "5" in str(timeout_error)

@@ -97,7 +97,7 @@ async def test_auto_reconnect_loop_cancelled(client: SocketClient):
         self.connected = True
         self.reconnecting = False
 
-    wait_for_mock = AsyncMock(side_effect=asyncio.exceptions.CancelledError)
+    wait_for_mock = AsyncMock(side_effect=asyncio.CancelledError)
 
     with (
         patch(

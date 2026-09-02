@@ -1,7 +1,5 @@
 """Client for interfacing with the thermostat"""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import random
@@ -92,9 +90,9 @@ class ResponseTimeoutError(AprilaireResponseError):
     """Raised when no response arrived for a request before its timeout.
 
     A failure to hear back rather than a refusal, so the same request may
-    succeed later. Deliberately not a subclass of `asyncio.TimeoutError`,
-    which names a different class either side of Python 3.11 and would put a
-    protocol timeout inside every `except OSError` meant for the socket.
+    succeed later. Deliberately not a subclass of `TimeoutError`, which is an
+    `OSError` and would put a protocol timeout inside every `except OSError`
+    meant for the socket.
     """
 
     def __init__(
@@ -161,11 +159,13 @@ DEFAULT_COS_SUBSCRIPTIONS: dict[Attribute, int] = {
     attribute: value for attribute, value in COS_SUBSCRIPTIONS if attribute is not None
 }
 
+type AttributeKey = tuple[FunctionalDomain, int]
+
 # Attributes whose support varies by thermostat model (spec 5.1 RAT/LAT
 # sensors, spec 5.4 written outdoor temperature), paired with the attribute
 # `AprilaireClient` reports their availability under. A model without them
 # answers a read with a NACK rather than with data.
-AVAILABILITY_ATTRIBUTES: dict[tuple[FunctionalDomain, int], Attribute] = {
+AVAILABILITY_ATTRIBUTES: dict[AttributeKey, Attribute] = {
     (FunctionalDomain.SENSORS, 1): Attribute.SENSOR_VALUES_AVAILABLE,
     (FunctionalDomain.SENSORS, 4): Attribute.WRITTEN_OUTDOOR_TEMPERATURE_AVAILABLE,
 }
@@ -191,7 +191,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         # connection. `None` means connecting only starts the queue loop.
         self.connected_action = connected_action
 
-        self.transport: asyncio.Transport = None
+        self.transport: asyncio.Transport | None = None
 
         self.packet_queue = asyncio.Queue()
 
@@ -673,10 +673,10 @@ class AprilaireClient(SocketClient):
         host: str,
         port: int,
         data_received_callback: Callable[[dict[str, Any]], None],
-        reconnect_interval: int = None,
-        retry_connection_interval: int = None,
+        reconnect_interval: int | None = None,
+        retry_connection_interval: int | None = None,
     ) -> None:
-        self.protocol: _AprilaireClientProtocol = None
+        self.protocol: _AprilaireClientProtocol | None = None
 
         super().__init__(
             host,
@@ -689,18 +689,16 @@ class AprilaireClient(SocketClient):
         # Each entry pairs a waiter's future with the sequence number (spec
         # section F notes 2-3) of the request it is waiting on, or None to
         # match on (functional_domain, attribute) alone.
-        self.futures: dict[
-            tuple[FunctionalDomain, int], list[tuple[asyncio.Future, int | None]]
-        ] = {}
+        self.futures: dict[AttributeKey, list[tuple[asyncio.Future, int | None]]] = {}
 
         # Attributes this thermostat has proved it doesn't implement, mapped
         # to the terminal NACK that proved it. Held here rather than on the
         # protocol, which is rebuilt on every reconnect.
-        self.unsupported_attributes: dict[tuple[FunctionalDomain, int], NackError] = {}
+        self.unsupported_attributes: dict[AttributeKey, NackError] = {}
 
         # The last availability reported for each key of
         # `AVAILABILITY_ATTRIBUTES`, so it is pushed only on a change.
-        self._reported_availability: dict[tuple[FunctionalDomain, int], bool] = {}
+        self._reported_availability: dict[AttributeKey, bool] = {}
 
     async def _reconnect_with_delay(self):
         """Reconnect after a lost connection.
@@ -811,7 +809,7 @@ class AprilaireClient(SocketClient):
                     future.set_exception(data)
                 else:
                     future.set_result(data)
-            except asyncio.exceptions.InvalidStateError:
+            except asyncio.InvalidStateError:
                 pass
 
         if unresolved_entries:
@@ -930,7 +928,7 @@ class AprilaireClient(SocketClient):
         self,
         functional_domain: FunctionalDomain,
         attribute: int,
-        timeout: int = None,
+        timeout: int | None = None,
         sequence: int | None = None,
     ):
         """Wait for a response for a particular request.
@@ -946,7 +944,7 @@ class AprilaireClient(SocketClient):
         terminally NACKed.
         """
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         future_key = (functional_domain, attribute)
@@ -957,7 +955,7 @@ class AprilaireClient(SocketClient):
 
         try:
             return await asyncio.wait_for(future, timeout)
-        except asyncio.exceptions.TimeoutError as exc:
+        except TimeoutError as exc:
             # Not logged: only the caller knows whether a missed response
             # matters. A `NackError` propagates from the future as-is and is
             # logged by `_AprilaireClientProtocol._handle_nack`.
@@ -980,7 +978,7 @@ class AprilaireClient(SocketClient):
         """Send a request for the controlling sensor values (spec 5.2)"""
         return await self.protocol.read_sensors()
 
-    async def read_sensors_and_wait(self, timeout: int = None):
+    async def read_sensors_and_wait(self, timeout: int | None = None):
         """Send a request for the controlling sensor values (spec 5.2) and
         wait for the response"""
         sequence = await self.read_sensors()
@@ -1002,7 +1000,7 @@ class AprilaireClient(SocketClient):
 
         return await self.protocol.read_sensor_values()
 
-    async def read_sensor_values_and_wait(self, timeout: int = None):
+    async def read_sensor_values_and_wait(self, timeout: int | None = None):
         """Send a request for the full sensor values array (spec 5.1) and
         wait for the response"""
         sequence = await self.read_sensor_values()
@@ -1023,7 +1021,9 @@ class AprilaireClient(SocketClient):
 
         return await self.protocol.read_written_outdoor_temperature()
 
-    async def read_written_outdoor_temperature_and_wait(self, timeout: int = None):
+    async def read_written_outdoor_temperature_and_wait(
+        self, timeout: int | None = None
+    ):
         """Send a request for the written outdoor temperature value
         (spec 5.4) and wait for the response"""
         sequence = await self.read_written_outdoor_temperature()
@@ -1035,7 +1035,7 @@ class AprilaireClient(SocketClient):
         """Send a request for updated control data"""
         return await self.protocol.read_control()
 
-    async def read_control_and_wait(self, timeout: int = None):
+    async def read_control_and_wait(self, timeout: int | None = None):
         """Send a request for updated control data and wait for the response"""
         sequence = await self.read_control()
         return await self.wait_for_response(
@@ -1046,7 +1046,7 @@ class AprilaireClient(SocketClient):
         """Send a request for updated scheduling data"""
         return await self.protocol.read_scheduling()
 
-    async def read_scheduling_and_wait(self, timeout: int = None):
+    async def read_scheduling_and_wait(self, timeout: int | None = None):
         """Send a request for updated scheduling data and wait for the response"""
         sequence = await self.read_scheduling()
         return await self.wait_for_response(
@@ -1077,7 +1077,7 @@ class AprilaireClient(SocketClient):
         """Send a request to read the MAC address"""
         return await self.protocol.read_mac_address()
 
-    async def read_mac_address_and_wait(self, timeout: int = None):
+    async def read_mac_address_and_wait(self, timeout: int | None = None):
         """Send a request to read the MAC address and wait for the response"""
         sequence = await self.read_mac_address()
         return await self.wait_for_response(
@@ -1088,7 +1088,7 @@ class AprilaireClient(SocketClient):
         """Send a request to read the thermostat name"""
         return await self.protocol.read_thermostat_name()
 
-    async def read_thermostat_name_and_wait(self, timeout: int = None):
+    async def read_thermostat_name_and_wait(self, timeout: int | None = None):
         """Send a request to read the thermostat name and wait for the response"""
         sequence = await self.read_thermostat_name()
         return await self.wait_for_response(
@@ -1137,7 +1137,7 @@ class AprilaireClient(SocketClient):
         """Send a request to read the thermostat/IAQ available data"""
         return await self.protocol.read_thermostat_iaq_available()
 
-    async def read_thermostat_iaq_available_and_wait(self, timeout: int = None):
+    async def read_thermostat_iaq_available_and_wait(self, timeout: int | None = None):
         """Send a request to read the thermostat/IAQ available data and wait
         for the response"""
         sequence = await self.read_thermostat_iaq_available()
@@ -1149,7 +1149,7 @@ class AprilaireClient(SocketClient):
         """Send a request to read the thermostat status"""
         return await self.protocol.read_thermostat_status()
 
-    async def read_thermostat_status_and_wait(self, timeout: int = None):
+    async def read_thermostat_status_and_wait(self, timeout: int | None = None):
         """Send a request to read the thermostat status and wait for the
         response"""
         sequence = await self.read_thermostat_status()
@@ -1161,7 +1161,7 @@ class AprilaireClient(SocketClient):
         """Send a request to read the IAQ status"""
         return await self.protocol.read_iaq_status()
 
-    async def read_iaq_status_and_wait(self, timeout: int = None):
+    async def read_iaq_status_and_wait(self, timeout: int | None = None):
         """Send a request to read the IAQ status and wait for the response"""
         sequence = await self.read_iaq_status()
         return await self.wait_for_response(
@@ -1172,7 +1172,7 @@ class AprilaireClient(SocketClient):
         """Send a request to read the current COS subscription settings (spec 7.1)"""
         return await self.protocol.read_cos_subscriptions()
 
-    async def read_cos_subscriptions_and_wait(self, timeout: int = None):
+    async def read_cos_subscriptions_and_wait(self, timeout: int | None = None):
         """Send a request to read the current COS subscription settings
         (spec 7.1) and wait for the response"""
         sequence = await self.read_cos_subscriptions()

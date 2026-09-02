@@ -1,15 +1,6 @@
 """Constants for the Aprilaire integration"""
 
-from __future__ import annotations
-
-from enum import Enum, IntEnum
-
-try:
-    from enum import StrEnum
-except ImportError:
-
-    class StrEnum(str, Enum):
-        pass
+from enum import IntEnum, StrEnum
 
 
 class Action(IntEnum):
