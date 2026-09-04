@@ -22,7 +22,7 @@ crc==7.1.0
     # via pyaprilaire (pyproject.toml)
 distlib==0.4.3
     # via virtualenv
-filelock==3.32.3
+filelock==3.32.5
     # via
     #   python-discovery
     #   virtualenv
