@@ -71,7 +71,7 @@ ruff==0.16.4
     # via pyaprilaire (pyproject.toml)
 toml==0.10.2
     # via bumpver
-virtualenv==21.7.5
+virtualenv==21.7.7
     # via pre-commit
 wheel==0.48.0
     # via pip-tools
