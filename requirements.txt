@@ -67,7 +67,7 @@ python-discovery==1.5.3
     # via virtualenv
 pyyaml==6.0.3
     # via pre-commit
-ruff==0.16.4
+ruff==0.16.5
     # via pyaprilaire (pyproject.toml)
 toml==0.10.2
     # via bumpver
