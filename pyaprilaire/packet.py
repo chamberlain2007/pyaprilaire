@@ -307,6 +307,21 @@ class Packet:
         self.data = data or {}
         self.raw_data = raw_data
 
+        # Set by `parse`: the frame's bytes, and why it couldn't be decoded
+        self.raw = b""
+        self.error: str | None = None
+
+    @property
+    def payload(self) -> bytes:
+        """The parsed frame's bytes after its action, functional domain and
+        attribute (or a NACK's status code), excluding the CRC"""
+        return self.raw[6 if self.action == Action.NACK else 7 : -1]
+
+    @property
+    def crc_valid(self) -> bool:
+        """Whether the parsed frame's CRC matches its contents"""
+        return bool(self.raw) and self._verify_crc(self.raw[:-1], self.raw[-1])
+
     @classmethod
     def get_parseable_length(self, data: bytes) -> int:
         """Return how many leading bytes of `data` make up zero or more
@@ -332,173 +347,134 @@ class Packet:
         return data_index
 
     @classmethod
-    def parse(self, data: bytes) -> Iterator[Packet]:
+    def parse(self, data: bytes, strict: bool = True) -> Iterator[Packet]:
+        """Parse the complete frames in `data`, ignoring a trailing partial one.
+
+        Only frames that decode against `MAPPING` with a valid CRC are yielded
+        unless `strict` is False, in which case every frame is, with `raw`
+        holding its bytes and `error` saying why it couldn't be decoded.
+        """
         data_index = 0
+        parseable_length = self.get_parseable_length(data)
 
-        while data_index < len(data):
-            # A partial frame at the end of the buffer stops the loop rather
-            # than raising: REV/SEQ/CNT need 4 bytes, and ACTION/FUNCTIONAL
-            # DOMAIN/ATTRIBUTE (read at fixed offsets below) need 7.
-            if data_index + 4 > len(data):
-                break
-
-            revision = data[data_index]
-            sequence = data[data_index + 1]
+        while data_index < parseable_length:
             count = data[data_index + 2] << 8 | data[data_index + 3]
+            frame = bytes(data[data_index : data_index + count + 5])
+            data_index += count + 5
 
-            frame_end = data_index + count + 5
+            packet = self._parse_frame(frame)
 
-            if frame_end > len(data) or data_index + 7 > len(data):
-                break
+            if not strict or (packet.error is None and packet.crc_valid):
+                yield packet
 
-            action = int(data[data_index + 4])
-            functional_domain = int(data[data_index + 5])
-            attribute = int(data[data_index + 6])
+    @classmethod
+    def _parse_frame(self, frame: bytes) -> Packet:
+        """Parse one complete frame, setting `error` if it can't be decoded"""
+        revision, sequence, count = frame[0], frame[1], len(frame) - 5
+        body = frame[4:-1]
 
-            try:
-                action = Action(action)
-            except ValueError:
-                data_index += count + 5
-                continue
+        if body[:1] == bytes([Action.NACK]):
+            # Spec section G: for a NACK this byte is a section H.5 status
+            # code (0x00-0xFF), not a FunctionalDomain member.
+            packet = NackPacket(
+                body[1] if len(body) > 1 else None, revision, sequence, count
+            )
 
-            if action == Action.NACK:
-                # Spec section G: for a NACK this byte is a section H.5
-                # status code (0x00-0xFF), not a FunctionalDomain member, so
-                # it must not be coerced through that enum.
-                status_code = int(data[data_index + 5])
-
-                crc_index = data_index + 4 + count
-
-                if crc_index < len(data) and Packet._verify_crc(
-                    data[data_index:crc_index], data[crc_index]
-                ):
-                    # Spec section F notes 2-3: a NACK carries the sequence
-                    # number of the request that caused it.
-                    yield NackPacket(status_code, sequence=sequence)
-
-                data_index += count + 5
-                continue
-
-            try:
-                functional_domain = FunctionalDomain(functional_domain)
-            except ValueError:
-                data_index += count + 5
-                continue
-
-            if (
-                action not in MAPPING
-                or functional_domain not in MAPPING[action]
-                or attribute not in MAPPING[action][functional_domain]
-            ):
-                data_index += count + 5
-                continue
+            if len(body) < 2:
+                packet.error = "NACK has no status code"
+        else:
+            action, functional_domain, attribute = [*body[:3], None, None, None][:3]
 
             packet = Packet(
                 action, functional_domain, attribute, revision, sequence, count
             )
+            packet.error = self._decode_body(packet, body)
 
-            final_index = data_index + count + 3
-            payload_start_index = data_index
-            data_index += 7
-            attribute_index = 0
-            frame_malformed = False
+        packet.raw = frame
 
-            while data_index <= final_index:
-                if attribute_index >= len(
-                    MAPPING[action][functional_domain][attribute]
-                ):
-                    data_index += 1
-                    pass
-                else:
-                    attribute_info = MAPPING[action][functional_domain][attribute][
-                        attribute_index
-                    ]
+        return packet
 
-                    attribute_name, value_type, extra_attribute_info = (
-                        attribute_info[0],
-                        attribute_info[1],
-                        attribute_info[2:],
-                    )
+    @classmethod
+    def _decode_body(self, packet: Packet, body: bytes) -> str | None:
+        """Decode a frame's action, functional domain, attribute and data into
+        `packet`, returning why it couldn't be decoded, or None"""
+        if len(body) < 3:
+            return "Frame is too short for an action, functional domain and attribute"
 
-                    if attribute_name is None or value_type is None:
-                        data_index += 1
-                        attribute_index += 1
-                        continue
+        try:
+            packet.action = Action(packet.action)
+        except ValueError:
+            return "Unknown action"
 
-                    data_value = data[data_index]
+        try:
+            packet.functional_domain = FunctionalDomain(packet.functional_domain)
+        except ValueError:
+            return "Unknown functional domain"
 
-                    if value_type == ValueType.INTEGER:
-                        packet.data[attribute_name] = data_value
-                        data_index += 1
-                    elif value_type == ValueType.INTEGER_REQUIRED:
-                        if data_value is not None and data_value != 0:
-                            packet.data[attribute_name] = data_value
-                        data_index += 1
-                    elif value_type == ValueType.HUMIDITY:
-                        packet.data[attribute_name] = self._decode_humidity(data_value)
-                        data_index += 1
-                    elif value_type == ValueType.TEMPERATURE:
-                        packet.data[attribute_name] = self._decode_temperature(
-                            data_value
-                        )
-                        data_index += 1
-                    elif value_type == ValueType.TEMPERATURE_REQUIRED:
-                        if data_value is not None and data_value != 0:
-                            packet.data[attribute_name] = self._decode_temperature(
-                                data_value
-                            )
-                        data_index += 1
-                    elif value_type == ValueType.MAC_ADDRESS:
-                        # A MAC that overruns the frame's declared length
-                        # would consume the CRC (or the next frame) and
-                        # desynchronize the stream.
-                        if data_index + 5 > final_index:
-                            frame_malformed = True
-                            break
+        mapped_attributes = (
+            MAPPING.get(packet.action, {})
+            .get(packet.functional_domain, {})
+            .get(packet.attribute)
+        )
 
-                        mac_address_components = []
+        if mapped_attributes is None:
+            return "Unknown attribute"
 
-                        for _ in range(0, 6):
-                            mac_address_components.append(f"{data[data_index]:02x}")
-                            data_index += 1
+        data_index = 3
+        final_index = len(body) - 1
 
-                        packet.data[attribute_name] = ":".join(mac_address_components)
-                    elif value_type == ValueType.TEXT:
-                        text_length = extra_attribute_info[0]
+        for attribute_info in mapped_attributes:
+            if data_index > final_index:
+                break
 
-                        # TEXT consumes text_length bytes plus one trailing
-                        # byte; same overshoot risk as MAC_ADDRESS above.
-                        if data_index + text_length > final_index:
-                            frame_malformed = True
-                            break
+            attribute_name, value_type, *extra_attribute_info = attribute_info
 
-                        text = ""
-
-                        for _ in range(0, text_length):
-                            current_value = (
-                                " " if data[data_index] == 0 else chr(data[data_index])
-                            )
-                            text += current_value
-                            data_index += 1
-
-                        data_index += 1
-
-                        text = text.strip(" ")
-
-                        packet.data[attribute_name] = text
-
-                    attribute_index += 1
-
-            if frame_malformed:
-                data_index = payload_start_index + count + 5
+            if attribute_name is None or value_type is None:
+                data_index += 1
                 continue
 
-            crc = data[data_index]
+            data_value = body[data_index]
 
-            if Packet._verify_crc(data[payload_start_index:data_index], crc):
-                yield packet
+            if value_type == ValueType.INTEGER:
+                packet.data[attribute_name] = data_value
+                data_index += 1
+            elif value_type == ValueType.INTEGER_REQUIRED:
+                if data_value != 0:
+                    packet.data[attribute_name] = data_value
+                data_index += 1
+            elif value_type == ValueType.HUMIDITY:
+                packet.data[attribute_name] = self._decode_humidity(data_value)
+                data_index += 1
+            elif value_type == ValueType.TEMPERATURE:
+                packet.data[attribute_name] = self._decode_temperature(data_value)
+                data_index += 1
+            elif value_type == ValueType.TEMPERATURE_REQUIRED:
+                if data_value != 0:
+                    packet.data[attribute_name] = self._decode_temperature(data_value)
+                data_index += 1
+            elif value_type == ValueType.MAC_ADDRESS:
+                if data_index + 5 > final_index:
+                    return f"Frame is too short for {attribute_name}"
 
-            data_index += 1
+                packet.data[attribute_name] = ":".join(
+                    f"{value:02x}" for value in body[data_index : data_index + 6]
+                )
+                data_index += 6
+            else:
+                text_length = extra_attribute_info[0]
+
+                # TEXT consumes text_length bytes plus one trailing byte.
+                if data_index + text_length > final_index:
+                    return f"Frame is too short for {attribute_name}"
+
+                text = body[data_index : data_index + text_length]
+
+                packet.data[attribute_name] = "".join(
+                    " " if value == 0 else chr(value) for value in text
+                ).strip(" ")
+                data_index += text_length + 1
+
+        return None
 
     @classmethod
     def _generate_crc(self, lst: list[int]):

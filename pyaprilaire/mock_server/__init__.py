@@ -1,11 +1,10 @@
 """Mock server for testing Aprilaire integration"""
 
-import argparse
 import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from .const import (
+from ..const import (
     QUEUE_FREQUENCY,
     Action,
     AirCleaningStatus,
@@ -25,7 +24,7 @@ from .const import (
     ThermostatError,
     VentilationStatus,
 )
-from .packet import MAPPING, NackPacket, Packet
+from ..packet import MAPPING, NackPacket, Packet
 
 # Real hardware ends a temporary hold (spec 3.4) at the next scheduled
 # transition; the mock has no schedule, so it uses a fixed duration.
@@ -1135,23 +1134,3 @@ class _AprilaireServerProtocol(asyncio.Protocol):
         self._cancel_written_outdoor_timeout()
 
         self.transport = None
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-H", "--host", default="localhost")
-    parser.add_argument("-p", "--port", default=7001)
-
-    args = parser.parse_args()
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    loop.create_task(loop.create_server(_AprilaireServerProtocol, args.host, args.port))
-
-    _LOGGER.info("Server listening on %s port %d", args.host, args.port)
-
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass
