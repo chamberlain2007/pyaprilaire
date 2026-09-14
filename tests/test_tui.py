@@ -857,15 +857,18 @@ async def test_a_failure_to_repeat_is_reported(session):
 async def test_the_state_pane_is_toggled(session):
     app = AprilaireTui(session)
 
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(120, 40)) as pilot:
         state = app.query_one("#state", DataTable)
+        log = app.query_one("#log", RichLog)
 
         assert not state.has_class("visible")
+        assert log.region.width == 120
 
         await pilot.press("s")
         await pilot.pause()
 
         assert state.has_class("visible")
+        assert log.region.width == state.region.width == 60
 
 
 async def test_connecting_and_disconnecting(session):

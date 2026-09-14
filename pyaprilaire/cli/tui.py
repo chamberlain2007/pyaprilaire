@@ -354,13 +354,13 @@ class AprilaireTui(App):
     }
 
     #log {
-        width: 2fr;
+        width: 1fr;
         border: round $accent;
         padding: 0 1;
     }
 
     #state {
-        width: 42;
+        width: 1fr;
         border: round $accent;
         display: none;
     }
