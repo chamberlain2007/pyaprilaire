@@ -16,7 +16,12 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ruff"]
+cli = ["textual >= 0.60"]
+dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ruff", "textual >= 0.60"]
+
+[project.scripts]
+pyaprilaire = "pyaprilaire.cli:main"
+pyaprilaire-mock-server = "pyaprilaire.mock_server.__main__:main"
 
 [tool.bumpver]
 current_version = "0.9.1"
@@ -46,8 +51,7 @@ filterwarnings = []
 
 [tool.coverage.run]
 omit = [
-    "pyaprilaire/mock_server.py",
-    "pyaprilaire/test_connection.py"
+    "pyaprilaire/mock_server/__init__.py",
 ]
 
 [tool.ruff]

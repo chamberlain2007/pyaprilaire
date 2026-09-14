@@ -32,6 +32,17 @@ iniconfig==2.3.0
     # via pytest
 lexid==2021.1006
     # via bumpver
+linkify-it-py==2.2.0
+    # via markdown-it-py
+markdown-it-py[linkify]==4.2.0
+    # via
+    #   mdit-py-plugins
+    #   rich
+    #   textual
+mdit-py-plugins==0.6.1
+    # via textual
+mdurl==0.1.2
+    # via markdown-it-py
 nodeenv==1.10.0
     # via pre-commit
 packaging==26.3
@@ -42,7 +53,9 @@ packaging==26.3
 pip-tools==7.6.1
     # via pyaprilaire (pyproject.toml)
 platformdirs==4.11.4
-    # via virtualenv
+    # via
+    #   textual
+    #   virtualenv
 pluggy==1.6.0
     # via
     #   pytest
@@ -50,7 +63,10 @@ pluggy==1.6.0
 pre-commit==4.6.2
     # via pyaprilaire (pyproject.toml)
 pygments==2.21.0
-    # via pytest
+    # via
+    #   pytest
+    #   rich
+    #   textual
 pyproject-hooks==1.2.0
     # via
     #   build
@@ -67,10 +83,16 @@ python-discovery==1.6.0
     # via virtualenv
 pyyaml==6.0.3
     # via pre-commit
+rich==15.0.0
+    # via textual
 ruff==0.16.5
+    # via pyaprilaire (pyproject.toml)
+textual==8.2.8
     # via pyaprilaire (pyproject.toml)
 toml==0.10.2
     # via bumpver
+typing-extensions==4.16.0
+    # via textual
 virtualenv==21.7.9
     # via pre-commit
 wheel==0.48.0
