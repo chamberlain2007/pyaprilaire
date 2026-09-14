@@ -1,11 +1,11 @@
 """Client for connecting to the Aprilaire thermostat socket"""
 
-from __future__ import annotations
-
 import asyncio
+import logging
 from collections.abc import Callable
-from logging import Logger
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class SocketClient:
@@ -16,15 +16,13 @@ class SocketClient:
         host: str,
         port: int,
         data_received_callback: Callable[[dict[str, Any]], None],
-        logger: Logger,
-        reconnect_interval: int = None,
-        retry_connection_interval: int = None,
+        reconnect_interval: int | None = None,
+        retry_connection_interval: int | None = None,
     ) -> None:
         """Initialize client"""
         self.host = host
         self.port = port
         self.data_received_callback = data_received_callback
-        self.logger = logger
         self.reconnect_interval = reconnect_interval
         self.retry_connection_interval = retry_connection_interval
 
@@ -33,9 +31,9 @@ class SocketClient:
         self.reconnecting = False
         self.auto_reconnecting = False
         self.cancelled = False
-        self.reconnect_break_future: asyncio.Future = None
+        self.reconnect_break_future: asyncio.Future | None = None
 
-        self.protocol: asyncio.Protocol = None
+        self.protocol: asyncio.Protocol | None = None
 
     async def _auto_reconnect_loop(self):
         """Wait for cancellable reconnect interval to pass, and perform reconnect"""
@@ -47,7 +45,7 @@ class SocketClient:
                 break
 
             if not self.reconnect_break_future:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 self.reconnect_break_future = loop.create_future()
 
             try:
@@ -55,9 +53,9 @@ class SocketClient:
                     self.reconnect_break_future, self.reconnect_interval
                 )
                 break
-            except asyncio.exceptions.CancelledError:
+            except asyncio.CancelledError:
                 break
-            except asyncio.exceptions.TimeoutError:
+            except TimeoutError:
                 self.auto_reconnecting = True
                 self.state_changed()
 
@@ -68,7 +66,7 @@ class SocketClient:
         if self.reconnect_break_future:
             try:
                 self.reconnect_break_future.set_result(True)
-            except asyncio.exceptions.InvalidStateError:
+            except asyncio.InvalidStateError:
                 pass
             self.reconnect_break_future = None
 
@@ -86,14 +84,13 @@ class SocketClient:
     async def _reconnect(self, connect_wait_period: int = 0):
         """Reconnect to the socket"""
 
-        if self.reconnecting:
+        if self.stopped or self.reconnecting:
             return
 
         self.reconnecting = True
 
         self.state_changed()
 
-        # Ensure already disconnected
         self._disconnect()
 
         if connect_wait_period is not None and connect_wait_period > 0:
@@ -102,46 +99,53 @@ class SocketClient:
         self.protocol = self.create_protocol()
 
         try:
-            await asyncio.get_event_loop().create_connection(
+            await asyncio.get_running_loop().create_connection(
                 lambda: self.protocol,
                 self.host,
                 self.port,
             )
 
-            self.connected = True
-            self.reconnecting = False
-            self.auto_reconnecting = False
-
-            self.state_changed()
+            self._connection_established()
 
             asyncio.ensure_future(self._auto_reconnect_loop())
 
         except Exception as exc:  # pylint: disable=broad-except
-            self.logger.error("Failed to connect to thermostat: %s", str(exc))
+            _LOGGER.error("Failed to connect to thermostat: %s", str(exc))
 
             self.reconnecting = False
 
             self.state_changed()
 
-            asyncio.ensure_future(self._reconnect(10))
+            if not self.stopped:
+                asyncio.ensure_future(self._reconnect(10))
 
     async def _reconnect_once(self):
         """Reconnect to the socket without reconnect loop"""
-        
+
         self.reconnecting = True
 
         self.state_changed()
 
-        # Ensure already disconnected
         self._disconnect()
 
         self.protocol = self.create_protocol()
 
-        await asyncio.get_event_loop().create_connection(
+        await asyncio.get_running_loop().create_connection(
             lambda: self.protocol,
             self.host,
             self.port,
         )
+
+        self._connection_established()
+
+    def _connection_established(self):
+        """Record a newly established connection.
+
+        The "connection made" line is skipped for the periodic reconnect of
+        `_auto_reconnect_loop`, which does not mean the connection was down.
+        """
+        if not self.auto_reconnecting:
+            _LOGGER.info("Aprilaire connection made")
 
         self.connected = True
         self.reconnecting = False

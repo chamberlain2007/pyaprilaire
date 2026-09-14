@@ -4,20 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyaprilaire"
-version = "0.9.1"
+version = "0.10.0rc0"
 readme = "README.md"
+requires-python = ">=3.14"
 dependencies = [
-    "crc >= 4"
+    "crc >= 7.1.0"
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.14",
 ]
 
 [project.optional-dependencies]
-dev = ["black", "bumpver", "isort", "pip-tools", "pytest-asyncio", "pytest-cov"]
+cli = ["textual >= 0.60"]
+dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ruff", "textual >= 0.60"]
+
+[project.scripts]
+pyaprilaire = "pyaprilaire.cli:main"
+pyaprilaire-mock-server = "pyaprilaire.mock_server.__main__:main"
 
 [tool.bumpver]
-current_version = "0.9.1"
+current_version = "0.10.0rc0"
 version_pattern = "MAJOR.MINOR.PATCH[PYTAGNUM]"
 commit_message  = "Bump version {old_version} -> {new_version}"
 commit          = true
@@ -44,9 +51,15 @@ filterwarnings = []
 
 [tool.coverage.run]
 omit = [
-    "pyaprilaire/mock_server.py",
-    "pyaprilaire/test_connection.py"
+    "pyaprilaire/mock_server/__init__.py",
 ]
 
-[tool.isort]
-profile = "black" 
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pyaprilaire"]
