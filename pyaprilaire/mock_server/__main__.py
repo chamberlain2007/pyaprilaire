@@ -9,7 +9,7 @@ from . import _LOGGER, _AprilaireServerProtocol
 def main() -> None:
     """Run a mock server until it is interrupted"""
 
-    parser = argparse.ArgumentParser(prog="pyaprilaire.mock_server")
+    parser = argparse.ArgumentParser(prog="pyaprilaire-mock-server")
     parser.add_argument("-H", "--host", default="localhost")
     parser.add_argument("-p", "--port", default=7001, type=int)
 

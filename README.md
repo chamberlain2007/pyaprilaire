@@ -122,7 +122,7 @@ During development, it is necessary to connect to a thermostat, but this can be 
 python -m pyaprilaire.mock_server
 ```
 
-The port can be specified with `-p PORT_NUMBER`. The default port is 7001.
+Installing the package also provides this as the `pyaprilaire-mock-server` command. The port can be specified with `-p PORT_NUMBER`. The default port is 7001.
 
 The interactive session can be pointed at the mock server in the same way as at a real device, which is a good way to try it out:
 

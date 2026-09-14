@@ -21,6 +21,7 @@ dev = ["bumpver", "pip-tools", "pre-commit", "pytest-asyncio", "pytest-cov", "ru
 
 [project.scripts]
 pyaprilaire = "pyaprilaire.cli:main"
+pyaprilaire-mock-server = "pyaprilaire.mock_server.__main__:main"
 
 [tool.bumpver]
 current_version = "0.9.1"
