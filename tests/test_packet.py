@@ -1587,3 +1587,82 @@ def test_get_simple_status_does_not_collide_across_enums():
     assert get_simple_status(HeatingEquipmentStatus.NOT_ACTIVE) == SimpleStatus.IDLE
     assert get_simple_status(FanStatus.NOT_ACTIVE) == SimpleStatus.OFF
     assert get_simple_status(DehumidificationStatus.NOT_ACTIVE) == SimpleStatus.IDLE
+
+
+def build_frame(*body: int) -> bytes:
+    """Build a frame with a valid CRC around any body, bypassing the mapping"""
+
+    frame = [1, 9, len(body) >> 8, len(body) & 0xFF, *body]
+    frame.append(Packet._generate_crc(frame))
+
+    return bytes(frame)
+
+
+UNDECODABLE_FRAMES = [
+    (
+        build_frame(),
+        "Frame is too short for an action, functional domain and attribute",
+    ),
+    (build_frame(99, 88, 1, 7), "Unknown action"),
+    (build_frame(Action.WRITE, 88, 1), "Unknown functional domain"),
+    (build_frame(Action.WRITE, FunctionalDomain.CONTROL, 99, 7), "Unknown attribute"),
+    (build_frame(Action.NACK), "NACK has no status code"),
+    (
+        build_frame(Action.READ_RESPONSE, FunctionalDomain.IDENTIFICATION, 2, 1),
+        "Frame is too short for mac_address",
+    ),
+]
+
+
+@pytest.mark.parametrize(("frame", "error"), UNDECODABLE_FRAMES)
+def test_parse_not_strict_yields_an_undecodable_frame(frame, error):
+    (packet,) = Packet.parse(frame, strict=False)
+
+    assert packet.error == error
+    assert packet.raw == frame
+    assert packet.crc_valid
+    assert (packet.revision, packet.sequence, packet.count) == (1, 9, len(frame) - 5)
+
+
+@pytest.mark.parametrize(("frame", "error"), UNDECODABLE_FRAMES)
+def test_parse_skips_an_undecodable_frame(frame, error):
+    assert list(Packet.parse(frame)) == []
+
+
+def test_parse_not_strict_yields_a_frame_with_an_invalid_crc():
+    frame = bytearray(
+        Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+    )
+    frame[-1] ^= 0xFF
+
+    (packet,) = Packet.parse(bytes(frame), strict=False)
+
+    assert not packet.crc_valid
+    assert packet.error is None
+    assert list(Packet.parse(bytes(frame))) == []
+
+
+def test_parse_not_strict_ignores_a_trailing_partial_frame():
+    frame = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1).serialize()
+
+    assert len(list(Packet.parse(frame + frame[:4], strict=False))) == 1
+
+
+def test_payload_of_a_parsed_frame():
+    (packet,) = Packet.parse(
+        build_frame(Action.WRITE, FunctionalDomain.CONTROL, 99, 7, 8), strict=False
+    )
+    (nack,) = Packet.parse(NackPacket(0x07).serialize())
+
+    assert packet.payload == bytes([7, 8])
+    assert nack.payload == b""
+    assert nack.raw == NackPacket(0x07).serialize()
+
+
+def test_a_packet_that_was_not_parsed_has_no_frame():
+    packet = Packet(Action.READ_REQUEST, FunctionalDomain.CONTROL, 1)
+
+    assert packet.raw == b""
+    assert packet.payload == b""
+    assert not packet.crc_valid
+    assert packet.error is None
