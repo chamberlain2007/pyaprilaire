@@ -4,6 +4,7 @@ Requires the optional Textual dependency, which is installed with the `cli`
 extra: `pip install pyaprilaire[cli]`.
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
@@ -93,16 +95,50 @@ SEND_OPTIONS = [
 OTHER_ATTRIBUTE = object()
 
 
+def command_prompt(command: ClientCommand) -> Content:
+    """Show a client function as its signature, with the name highlighted and
+    its description beneath"""
+
+    parts: list[str | tuple[str, str]] = [(command.name, "bold $text-primary"), "("]
+
+    for index, parameter in enumerate(command.parameters):
+        if index:
+            parts.append(", ")
+
+        parts.append(parameter.name)
+        parts.append((f": {parameter.type_name}", "$text-muted"))
+
+        if not parameter.required:
+            parts.append((f" = {parameter.default}", "$text-muted"))
+
+    parts.append(")")
+
+    if command.description:
+        parts.append((f"\n{command.description}", "italic $text-muted"))
+
+    return Content.assemble(*parts)
+
+
 class SelectionScreen(ModalScreen[Any]):
     """A filterable list of options"""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, options: list[tuple[str, Any]]) -> None:
+    def __init__(
+        self,
+        title: str,
+        options: list[tuple[str, Any]],
+        prompt: Callable[[Any], Content] | None = None,
+    ) -> None:
+        """Pair each option's value with the text it is filtered by, which is
+        also what is shown unless `prompt` renders the value instead, in which
+        case the options are separated by rules"""
+
         super().__init__()
 
         self.title_text = title
         self.options = options
+        self.prompt = prompt
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -121,7 +157,15 @@ class SelectionScreen(ModalScreen[Any]):
 
         option_list = self.query_one("#options", OptionList)
         option_list.clear_options()
-        option_list.add_options([label for label, _ in options])
+
+        if self.prompt:
+            # A None between two options is drawn as a rule
+            prompts = [
+                part for _, value in options for part in (self.prompt(value), None)
+            ]
+            option_list.add_options(prompts[:-1])
+        else:
+            option_list.add_options([label for label, _ in options])
 
         if options:
             option_list.highlighted = 0
@@ -669,7 +713,7 @@ class AprilaireTui(App):
         ]
 
         command: ClientCommand = await self.push_screen_wait(
-            SelectionScreen("Run a client function", options)
+            SelectionScreen("Run a client function", options, prompt=command_prompt)
         )
 
         if not command:

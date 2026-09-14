@@ -13,6 +13,7 @@ from textual.widgets import (  # noqa: E402
     RichLog,
 )
 
+from pyaprilaire.cli.commands import ClientCommand, CommandParameter  # noqa: E402
 from pyaprilaire.cli.session import DebugSession, SessionError  # noqa: E402
 from pyaprilaire.cli.tui import (  # noqa: E402
     AprilaireTui,
@@ -20,6 +21,7 @@ from pyaprilaire.cli.tui import (  # noqa: E402
     HelpScreen,
     RawScreen,
     SelectionScreen,
+    command_prompt,
 )
 from pyaprilaire.const import Action, Attribute, FunctionalDomain  # noqa: E402
 from pyaprilaire.packet import Packet  # noqa: E402
@@ -869,6 +871,46 @@ async def test_the_state_pane_is_toggled(session):
 
         assert state.has_class("visible")
         assert log.region.width == state.region.width == 60
+
+
+def test_a_command_prompt_highlights_the_name_and_describes_it():
+    command = ClientCommand(
+        "set_hold",
+        "Send a request to set the hold",
+        [CommandParameter("hold", int), CommandParameter("timeout", int, default=5)],
+    )
+
+    prompt = command_prompt(command)
+
+    assert prompt.plain == (
+        "set_hold(hold: int, timeout: int = 5)\nSend a request to set the hold"
+    )
+    assert [(span.start, span.end, span.style) for span in prompt.spans][:1] == [
+        (0, 8, "bold $text-primary")
+    ]
+    assert command_prompt(ClientCommand("sync")).plain == "sync()"
+
+
+async def test_the_client_functions_are_separated(session):
+    app = AprilaireTui(session)
+
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.press("f")
+        await pilot.pause()
+
+        option_list = app.screen.query_one("#options", OptionList)
+
+        assert option_list.option_count == len(session.commands)
+        assert option_list.get_option_at_index(0)._divider
+        assert not option_list.get_option_at_index(len(session.commands) - 1)._divider
+
+        # Filtering still matches the plain signature
+        app.screen.query_one("#filter", Input).value = "read_control"
+        await pilot.pause()
+
+        assert option_list.get_option_at_index(0).prompt.plain.startswith(
+            "read_control("
+        )
 
 
 async def test_connecting_and_disconnecting(session):
