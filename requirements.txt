@@ -85,7 +85,7 @@ pyyaml==6.0.3
     # via pre-commit
 rich==15.0.0
     # via textual
-ruff==0.16.5
+ruff==0.16.7
     # via pyaprilaire (pyproject.toml)
 textual==8.2.8
     # via pyaprilaire (pyproject.toml)
