@@ -300,3 +300,143 @@ def test_connection_established_silent_for_auto_reconnect(client: SocketClient, 
     assert "Aprilaire connection made" not in caplog.text
     assert client.connected
     assert not client.auto_reconnecting
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_stop_during_reconnect_delay(client: SocketClient, restart):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    dial = AsyncMock()
+
+    async def backoff(seconds):
+        assert seconds == 10
+        entered.set()
+        await release.wait()
+
+    client.create_protocol = Mock(return_value=Mock(transport=None))
+    client.stopped = False
+    with (
+        patch("asyncio.sleep", new=backoff),
+        patch("asyncio.BaseEventLoop.create_connection", new=dial),
+    ):
+        reconnect = asyncio.create_task(client._reconnect(10))
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            client.stop_listen()
+            if restart:
+                await client.start_listen()
+                assert dial.await_count == 1
+                assert client.connected
+            release.set()
+            await asyncio.wait_for(reconnect, 1)
+            assert dial.await_count == int(restart)
+            assert client.connected is restart
+            assert client.stopped is not restart
+            assert not client.reconnecting
+        finally:
+            release.set()
+            await reconnect
+            client.stop_listen()
+
+
+async def test_cancel_during_reconnect_delay(client: SocketClient):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    dial = AsyncMock()
+    retry = Mock()
+
+    async def backoff(seconds):
+        entered.set()
+        await release.wait()
+
+    client.stopped = False
+    with (
+        patch("asyncio.sleep", new=backoff),
+        patch("asyncio.BaseEventLoop.create_connection", new=dial),
+        patch("asyncio.ensure_future", new=retry),
+    ):
+        reconnect = asyncio.create_task(client._reconnect(10))
+        await asyncio.wait_for(entered.wait(), 1)
+        reconnect.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reconnect
+        client.stop_listen()
+        assert dial.await_count == 0
+        retry.assert_not_called()
+        assert not client.connected
+
+
+@pytest.mark.parametrize("action", ["stop", "restart", "continue"])
+async def test_delayed_reconnect_loopback(action):
+    tasks_before = asyncio.all_tasks()
+    accepted = asyncio.Queue()
+    closed = asyncio.Queue()
+    transports = []
+
+    class Peer(Protocol):
+        def connection_made(self, transport):
+            transports.append(transport)
+            accepted.put_nowait(transport)
+
+        def connection_lost(self, exc):
+            closed.put_nowait(True)
+
+    class ClientProtocol(Protocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+    client = SocketClient("127.0.0.1", 0, None)
+    client.create_protocol = ClientProtocol
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def backoff(seconds):
+        assert seconds == 10
+        entered.set()
+        await release.wait()
+
+    server = await asyncio.get_running_loop().create_server(Peer, "127.0.0.1", 0)
+    client.port = server.sockets[0].getsockname()[1]
+    reconnect = None
+    try:
+        await client.start_listen()
+        await asyncio.wait_for(accepted.get(), 1)
+        with patch("asyncio.sleep", new=backoff):
+            reconnect = asyncio.create_task(client._reconnect(10))
+            await asyncio.wait_for(entered.wait(), 1)
+            await asyncio.wait_for(closed.get(), 1)
+            if action != "continue":
+                client.stop_listen()
+            if action == "restart":
+                await client.start_listen()
+                await asyncio.wait_for(accepted.get(), 1)
+            release.set()
+            await asyncio.wait_for(reconnect, 1)
+        if action == "continue":
+            await asyncio.wait_for(accepted.get(), 1)
+        assert len(transports) == (1 if action == "stop" else 2)
+        assert client.connected is (action != "stop")
+        assert client.stopped is (action == "stop")
+        assert not client.reconnecting
+        assert sum(not transport.is_closing() for transport in transports) == (
+            0 if action == "stop" else 1
+        )
+        if action != "stop":
+            client.stop_listen()
+            await asyncio.wait_for(closed.get(), 1)
+    finally:
+        release.set()
+        if reconnect is not None:
+            await reconnect
+        client.stop_listen()
+        for transport in transports:
+            transport.close()
+        server.close()
+        await server.wait_closed()
+        loop_turn = asyncio.get_running_loop().create_future()
+        asyncio.get_running_loop().call_soon(loop_turn.set_result, None)
+        await loop_turn
+    pending = asyncio.all_tasks() - tasks_before
+    if pending:
+        await asyncio.wait_for(asyncio.gather(*pending), 1)
+    assert asyncio.all_tasks() - tasks_before == set()
