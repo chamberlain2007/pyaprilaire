@@ -25,6 +25,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
     - uses: actions/checkout@v7
     - name: Set up Python
@@ -42,6 +46,3 @@ jobs:
     # pip only resolves it when asked explicitly (==0.10.0rc0 or --pre).
     - name: Publish package
       uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
-      with:
-        user: __token__
-        password: ${{ secrets.PYPI_API_TOKEN }}
