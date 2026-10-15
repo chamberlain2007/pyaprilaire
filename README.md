@@ -4,7 +4,7 @@ pyaprilaire is a library to interact with AprilAire thermostats.
 
 # Compatibility
 
-aprilaire-ha is generally compatible with AprilAire [Home Automation](https://www.aprilairepartners.com/technical-information-options/home-automation-technical-information) 8800-series and [Zone Control](https://www.aprilairepartners.com/technical-information-options/zoning-technical-information) 6000-series thermostats. However, due to the number of physical models, it has not been tested on all models.
+pyaprilaire is generally compatible with AprilAire [Home Automation](https://www.aprilairepartners.com/technical-information-options/home-automation-technical-information) 8800-series and [Zone Control](https://www.aprilairepartners.com/technical-information-options/zoning-technical-information) 6000-series thermostats. However, due to the number of physical models, it has not been tested on all models.
 
 # Prerequisites
 
