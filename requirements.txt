@@ -93,7 +93,7 @@ toml==0.10.2
     # via bumpver
 typing-extensions==4.16.0
     # via textual
-virtualenv==21.7.9
+virtualenv==21.14.6
     # via pre-commit
 wheel==0.48.0
     # via pip-tools
