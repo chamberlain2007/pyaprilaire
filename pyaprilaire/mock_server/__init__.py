@@ -1,4 +1,4 @@
-"""Mock server for testing Aprilaire integration"""
+"""Mock server for testing AprilAire integration"""
 
 import asyncio
 import logging

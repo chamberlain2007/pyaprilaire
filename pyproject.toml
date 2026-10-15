@@ -1,19 +1,34 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyaprilaire"
 version = "0.9.1"
+description = "A library to interact with AprilAire thermostats"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Matthew FitzGerald-Chamberlain" },
+]
+keywords = ["AprilAire", "thermostat", "home automation", "hvac"]
 requires-python = ">=3.14"
 dependencies = [
     "crc >= 7.1.0"
 ]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Home Automation",
 ]
+
+[project.urls]
+Homepage = "https://github.com/chamberlain2007/pyaprilaire"
+Repository = "https://github.com/chamberlain2007/pyaprilaire"
+Author = "https://github.com/chamberlain2007"
+Issues = "https://github.com/chamberlain2007/pyaprilaire/issues"
 
 [project.optional-dependencies]
 cli = ["textual >= 0.60"]

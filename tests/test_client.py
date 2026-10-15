@@ -2221,7 +2221,7 @@ async def test_reconnect_with_delay_logs_connection_lost(
     ):
         await client._reconnect_with_delay()
 
-    assert "Aprilaire connection lost" in caplog.text
+    assert "AprilAire connection lost" in caplog.text
 
 
 async def test_reconnect_with_delay_silent_for_auto_reconnect(
@@ -2235,4 +2235,4 @@ async def test_reconnect_with_delay_silent_for_auto_reconnect(
     ):
         await client._reconnect_with_delay()
 
-    assert "Aprilaire connection lost" not in caplog.text
+    assert "AprilAire connection lost" not in caplog.text
