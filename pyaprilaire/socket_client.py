@@ -31,6 +31,7 @@ class SocketClient:
         self.reconnecting = False
         self.auto_reconnecting = False
         self.cancelled = False
+        self._stop_generation = 0
         self.reconnect_break_future: asyncio.Future | None = None
 
         self.protocol: asyncio.Protocol | None = None
@@ -87,6 +88,7 @@ class SocketClient:
         if self.stopped or self.reconnecting:
             return
 
+        stop_generation = self._stop_generation
         self.reconnecting = True
 
         self.state_changed()
@@ -95,6 +97,9 @@ class SocketClient:
 
         if connect_wait_period is not None and connect_wait_period > 0:
             await asyncio.sleep(connect_wait_period)
+
+        if self.stopped or stop_generation != self._stop_generation:
+            return
 
         self.protocol = self.create_protocol()
 
@@ -174,6 +179,7 @@ class SocketClient:
     def stop_listen(self):
         """Stop listening to the socket"""
 
+        self._stop_generation += 1
         self.stopped = True
         self.connected = False
         self.reconnecting = False
