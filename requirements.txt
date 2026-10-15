@@ -4,7 +4,7 @@
 #
 #    pip-compile --extra=dev pyproject.toml
 #
-build==1.5.0
+build==1.6.1
     # via pip-tools
 bumpver==2026.1132
     # via pyaprilaire (pyproject.toml)
