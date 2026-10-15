@@ -1,4 +1,4 @@
-"""Client for connecting to the Aprilaire thermostat socket"""
+"""Client for connecting to the AprilAire thermostat socket"""
 
 import asyncio
 import logging
@@ -9,7 +9,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SocketClient:
-    """Client for connecting to the Aprilaire thermostat socket"""
+    """Client for connecting to the AprilAire thermostat socket"""
 
     def __init__(
         self,
@@ -145,7 +145,7 @@ class SocketClient:
         `_auto_reconnect_loop`, which does not mean the connection was down.
         """
         if not self.auto_reconnecting:
-            _LOGGER.info("Aprilaire connection made")
+            _LOGGER.info("AprilAire connection made")
 
         self.connected = True
         self.reconnecting = False
