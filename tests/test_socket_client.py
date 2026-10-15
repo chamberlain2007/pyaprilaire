@@ -287,7 +287,7 @@ def test_connection_established_logged(client: SocketClient, caplog):
     with caplog.at_level(logging.INFO, logger="pyaprilaire.socket_client"):
         client._connection_established()
 
-    assert "Aprilaire connection made" in caplog.text
+    assert "AprilAire connection made" in caplog.text
     assert client.connected
 
 
@@ -297,6 +297,6 @@ def test_connection_established_silent_for_auto_reconnect(client: SocketClient, 
     with caplog.at_level(logging.INFO, logger="pyaprilaire.socket_client"):
         client._connection_established()
 
-    assert "Aprilaire connection made" not in caplog.text
+    assert "AprilAire connection made" not in caplog.text
     assert client.connected
     assert not client.auto_reconnecting

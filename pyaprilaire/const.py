@@ -1,4 +1,4 @@
-"""Constants for the Aprilaire integration"""
+"""Constants for the AprilAire integration"""
 
 from enum import IntEnum, StrEnum
 
@@ -34,7 +34,7 @@ class FunctionalDomain(IntEnum):
     NACK = 16
 
 
-# Known model numbers per Aprilaire; additional models may be discovered.
+# Known model numbers per AprilAire; additional models may be discovered.
 MODELS = {
     0: "8476W",
     1: "8810",

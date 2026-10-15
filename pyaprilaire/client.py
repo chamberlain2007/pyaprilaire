@@ -298,7 +298,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         """Called when data has been received from the socket"""
-        _LOGGER.debug("Aprilaire data received %s", data.hex(" "))
+        _LOGGER.debug("AprilAire data received %s", data.hex(" "))
 
         try:
             parsed_packets = self._parse_received_data(data)
@@ -708,7 +708,7 @@ class AprilaireClient(SocketClient):
         `SocketClient._auto_reconnect_loop`, which sets `auto_reconnecting`.
         """
         if not self.auto_reconnecting:
-            _LOGGER.info("Aprilaire connection lost")
+            _LOGGER.info("AprilAire connection lost")
 
         await super()._reconnect(self.retry_connection_interval)
 
