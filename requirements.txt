@@ -79,7 +79,7 @@ pytest-asyncio==1.4.0
     # via pyaprilaire (pyproject.toml)
 pytest-cov==7.1.0
     # via pyaprilaire (pyproject.toml)
-python-discovery==1.6.0
+python-discovery==1.6.2
     # via virtualenv
 pyyaml==6.0.3
     # via pre-commit
@@ -93,7 +93,7 @@ toml==0.10.2
     # via bumpver
 typing-extensions==4.16.0
     # via textual
-virtualenv==21.7.9
+virtualenv==21.14.6
     # via pre-commit
 wheel==0.48.0
     # via pip-tools
