@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyaprilaire"
-version = "0.10.0rc1"
+version = "0.10.0rc2"
 description = "A library to interact with AprilAire thermostats"
 readme = "README.md"
 license = "MIT"
@@ -39,7 +39,7 @@ pyaprilaire = "pyaprilaire.cli:main"
 pyaprilaire-mock-server = "pyaprilaire.mock_server.__main__:main"
 
 [tool.bumpver]
-current_version = "0.10.0rc1"
+current_version = "0.10.0rc2"
 version_pattern = "MAJOR.MINOR.PATCH[PYTAGNUM]"
 commit_message  = "Bump version {old_version} -> {new_version}"
 commit          = true
