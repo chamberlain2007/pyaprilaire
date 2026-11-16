@@ -281,6 +281,19 @@ MAPPING = {
     }
 }
 
+MAPPING[Action.READ_RESPONSE][FunctionalDomain.SETUP][10] = [
+    (None, None),
+    (None, None),
+    (Attribute.ZONE_COUNT, ValueType.INTEGER),
+    *[(None, None)] * 5,
+    (Attribute.DAT_LOW_LIMIT, ValueType.TEMPERATURE),
+    (None, None),
+    (Attribute.DAT_HIGH_LIMIT, ValueType.TEMPERATURE),
+]
+MAPPING[Action.READ_RESPONSE][FunctionalDomain.SCHEDULING][5] = [
+    (Attribute.HEAT_BLAST, ValueType.INTEGER),
+]
+
 MAPPING[Action.COS] = MAPPING[Action.READ_RESPONSE]
 MAPPING[Action.WRITE] = MAPPING[Action.READ_RESPONSE]
 MAPPING[Action.READ_REQUEST] = MAPPING[Action.READ_RESPONSE]
@@ -419,6 +432,16 @@ class Packet:
 
         if mapped_attributes is None:
             return "Unknown attribute"
+
+        if (
+            packet.functional_domain == FunctionalDomain.IDENTIFICATION
+            and packet.attribute == 2
+            and len(body) == 17
+        ):
+            mapped_attributes = (
+                MAPPING[Action.READ_RESPONSE][FunctionalDomain.IDENTIFICATION][2][:2]
+                + MAPPING[Action.READ_RESPONSE][FunctionalDomain.IDENTIFICATION][1]
+            )
 
         data_index = 3
         final_index = len(body) - 1

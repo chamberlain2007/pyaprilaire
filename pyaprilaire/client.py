@@ -199,6 +199,7 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         self.packet_queue = asyncio.Queue()
 
         self.sequence = 0
+        self.model_number: int | None = None
 
         # The most recently sent packet for each sequence number, with its
         # NACK retry count, so `_handle_nack` can attribute a NACK back to
@@ -250,6 +251,8 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                             _LOGGER.debug("Sent data: %s", serialized_packet.hex(" "))
 
                             self.transport.write(serialized_packet)
+                            if self.model_number in (None, 28):
+                                await asyncio.sleep(0.3)
                         except Exception:
                             _LOGGER.exception(
                                 "Failed to send packet, action=%s, "
@@ -315,6 +318,9 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             if isinstance(packet, NackPacket):
                 self._handle_nack(packet)
                 continue
+
+            if Attribute.MODEL_NUMBER in packet.data:
+                self.model_number = packet.data[Attribute.MODEL_NUMBER]
 
             # A non-NACK response means the request sharing its sequence
             # number succeeded.
@@ -614,6 +620,29 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Send a reques for the thermostat name"""
         return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5)
+        )
+
+    async def read_zone_system_settings(self):
+        """Read the observed 6003 zone configuration."""
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SETUP, 10)
+        )
+
+    async def read_heat_blast(self):
+        """Read Heat Blast state."""
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 5)
+        )
+
+    async def set_heat_blast(self, enabled: bool):
+        """Set Heat Blast state."""
+        return await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.SCHEDULING,
+                5,
+                data={Attribute.HEAT_BLAST: int(enabled)},
+            )
         )
 
     async def read_dehumidification_setpoint(self):
@@ -1096,6 +1125,18 @@ class AprilaireClient(SocketClient):
         return await self.wait_for_response(
             FunctionalDomain.IDENTIFICATION, 5, timeout, sequence=sequence
         )
+
+    async def read_zone_system_settings(self):
+        """Read the observed 6003 zone configuration."""
+        return await self.protocol.read_zone_system_settings()
+
+    async def read_heat_blast(self):
+        """Read Heat Blast state."""
+        return await self.protocol.read_heat_blast()
+
+    async def set_heat_blast(self, enabled: bool):
+        """Set Heat Blast state."""
+        return await self.protocol.set_heat_blast(enabled)
 
     async def read_dehumidification_setpoint(self):
         """Send a request for the dehumidification setpoint"""
