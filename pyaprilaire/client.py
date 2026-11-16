@@ -112,6 +112,15 @@ class ResponseTimeoutError(AprilaireResponseError):
         )
 
 
+# Model numbers whose outgoing frames are spaced `PACED_FRAME_INTERVAL` apart.
+# 28 is the 6003. Its automation port relays each frame to the zone panel,
+# and on the tested unit (GainSpan 4.14 firmware) back-to-back frames, such
+# as the burst sent when a connection is set up, led to dropped responses and
+# disconnects; 0.3 s between frames stopped them. The interval is what worked
+# there, not a documented minimum.
+PACED_MODEL_NUMBERS = frozenset({28})
+PACED_FRAME_INTERVAL = 0.3
+
 # How long to wait for a COS Subscriptions read response (spec 7.1) before
 # falling back to writing the desired mask unconditionally.
 COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
@@ -141,7 +150,7 @@ COS_SUBSCRIPTIONS = [
     (Attribute.COS_AWAY_SETTINGS, 1),
     (Attribute.COS_SCHEDULE_DAY, 0),
     (Attribute.COS_SCHEDULE_HOLD, 1),
-    (Attribute.COS_HEAT_BLAST, 0),
+    (Attribute.COS_HEAT_BLAST, 1),
     (Attribute.COS_SERVICE_REMINDERS_STATUS, 1),
     (Attribute.COS_ALERTS_STATUS, 1),
     (Attribute.COS_ALERTS_SETTINGS, 1),
@@ -251,8 +260,16 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                             _LOGGER.debug("Sent data: %s", serialized_packet.hex(" "))
 
                             self.transport.write(serialized_packet)
-                            if self.model_number in (None, 28):
-                                await asyncio.sleep(0.3)
+
+                            # Until IDENTIFICATION reports the model, this
+                            # could be a 6003, so the setup burst sent on
+                            # connect is paced too. Other models keep the
+                            # unpaced behavior once identified.
+                            if (
+                                self.model_number is None
+                                or self.model_number in PACED_MODEL_NUMBERS
+                            ):
+                                await asyncio.sleep(PACED_FRAME_INTERVAL)
                         except Exception:
                             _LOGGER.exception(
                                 "Failed to send packet, action=%s, "
@@ -623,19 +640,25 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         )
 
     async def read_zone_system_settings(self):
-        """Read the observed 6003 zone configuration."""
+        """Send a request for the zone system settings (SETUP attribute 10).
+
+        Undocumented: attribute 10 is not in the Home Automation protocol
+        spec available to this library. The decoded fields (zone count and
+        discharge air temperature limits) come from responses captured on a
+        6003, so other models may NACK it or lay the bytes out differently.
+        """
         return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.SETUP, 10)
         )
 
     async def read_heat_blast(self):
-        """Read Heat Blast state."""
+        """Send a request for the Heat Blast state (SCHEDULING attribute 5)"""
         return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 5)
         )
 
     async def set_heat_blast(self, enabled: bool):
-        """Set Heat Blast state."""
+        """Send a request to turn Heat Blast on or off"""
         return await self._send_packet(
             Packet(
                 Action.WRITE,
@@ -1127,16 +1150,63 @@ class AprilaireClient(SocketClient):
         )
 
     async def read_zone_system_settings(self):
-        """Read the observed 6003 zone configuration."""
+        """Send a request for the zone system settings (SETUP attribute 10).
+
+        Undocumented and observed only on a 6003; see
+        `_AprilaireClientProtocol.read_zone_system_settings`.
+        """
         return await self.protocol.read_zone_system_settings()
 
+    async def read_zone_system_settings_and_wait(self, timeout: int | None = None):
+        """Send a request for the zone system settings (SETUP attribute 10)
+        and wait for the response"""
+        sequence = await self.read_zone_system_settings()
+        return await self.wait_for_response(
+            FunctionalDomain.SETUP, 10, timeout, sequence=sequence
+        )
+
     async def read_heat_blast(self):
-        """Read Heat Blast state."""
+        """Send a request for the Heat Blast state (SCHEDULING attribute 5)"""
         return await self.protocol.read_heat_blast()
 
+    async def read_heat_blast_and_wait(self, timeout: int | None = None):
+        """Send a request for the Heat Blast state and wait for the response"""
+        sequence = await self.read_heat_blast()
+        return await self.wait_for_response(
+            FunctionalDomain.SCHEDULING, 5, timeout, sequence=sequence
+        )
+
     async def set_heat_blast(self, enabled: bool):
-        """Set Heat Blast state."""
+        """Send a request to turn Heat Blast on or off"""
         return await self.protocol.set_heat_blast(enabled)
+
+    async def set_heat_blast_and_wait(self, enabled: bool, timeout: int | None = None):
+        """Turn Heat Blast on or off, then read it back and return the result.
+
+        The read is queued behind the write, so its response reflects the
+        state after the write was handled. Raises `NackError` if the
+        thermostat NACKed the write before answering the read.
+        """
+        write_sequence = await self.set_heat_blast(enabled)
+
+        # The write itself may never get a response, so this only watches
+        # for its NACK while the read-back is outstanding.
+        write_nack = asyncio.ensure_future(
+            self.wait_for_response(
+                FunctionalDomain.SCHEDULING, 5, timeout, sequence=write_sequence
+            )
+        )
+
+        try:
+            data = await self.read_heat_blast_and_wait(timeout)
+        finally:
+            write_nack.cancel()
+            (write_outcome,) = await asyncio.gather(write_nack, return_exceptions=True)
+
+        if isinstance(write_outcome, NackError):
+            raise write_outcome
+
+        return data
 
     async def read_dehumidification_setpoint(self):
         """Send a request for the dehumidification setpoint"""

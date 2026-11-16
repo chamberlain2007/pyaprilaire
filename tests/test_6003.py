@@ -1,11 +1,17 @@
 """Synthetic 6003 protocol evidence without hardware access."""
 
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from pyaprilaire.client import _AprilaireClientProtocol
-from pyaprilaire.const import Action, Attribute, FunctionalDomain
+from pyaprilaire.client import (
+    PACED_FRAME_INTERVAL,
+    AprilaireClient,
+    NackError,
+    _AprilaireClientProtocol,
+)
+from pyaprilaire.const import Action, Attribute, FunctionalDomain, NackStatus
 from pyaprilaire.packet import Packet
 
 
@@ -42,7 +48,7 @@ async def test_identified_6003_outgoing_frames_are_paced(model):
     with patch("asyncio.sleep", sleep):
         await protocol._queue_loop(loop_count=1)
     assert protocol.transport.write.call_count == 2
-    assert [c.args for c in sleep.await_args_list].count((0.3,)) == 2
+    assert [c.args for c in sleep.await_args_list].count((PACED_FRAME_INTERVAL,)) == 2
 
 
 def test_heat_blast_round_trip():
@@ -65,3 +71,67 @@ async def test_6003_helpers_queue_expected_protocol_frames():
         bytes([2, 3, 5]),
         bytes([1, 3, 5, 1]),
     ]
+
+
+def test_heat_blast_cos_decodes():
+    received = next(Packet.parse(wire([5, 3, 5, 0])))
+    assert received.action == Action.COS
+    assert received.data[Attribute.HEAT_BLAST] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", [7, 8, 9])
+async def test_identified_other_models_are_not_paced(model):
+    protocol = _AprilaireClientProtocol(AsyncMock())
+    protocol.transport = Mock()
+    protocol.model_number = model
+    await protocol.read_control()
+    await protocol.read_sensors()
+    sleep = AsyncMock()
+    with patch("asyncio.sleep", sleep):
+        await protocol._queue_loop(loop_count=1)
+    assert protocol.transport.write.call_count == 2
+    assert (PACED_FRAME_INTERVAL,) not in [c.args for c in sleep.await_args_list]
+
+
+def _client():
+    client = AprilaireClient(None, None, Mock(), 10, 10)
+    client.protocol = _AprilaireClientProtocol(client.data_received)
+    return client
+
+
+async def _answer_next(client, *responses):
+    """Feed `(sequence, data)` pairs to the client once its waits exist."""
+    await asyncio.sleep(0)
+    for sequence, data in responses:
+        await client.data_received(FunctionalDomain.SCHEDULING, 5, data, sequence)
+
+
+@pytest.mark.asyncio
+async def test_set_heat_blast_and_wait_writes_then_returns_read_back():
+    client = _client()
+    answer = asyncio.ensure_future(_answer_next(client, (2, {Attribute.HEAT_BLAST: 1})))
+
+    result = await client.set_heat_blast_and_wait(True, 1)
+    await answer
+
+    assert result == {Attribute.HEAT_BLAST: 1}
+    assert [
+        client.protocol.packet_queue.get_nowait().serialize()[4:-1] for _ in range(2)
+    ] == [bytes([1, 3, 5, 1]), bytes([2, 3, 5])]
+    assert not client.futures
+
+
+@pytest.mark.asyncio
+async def test_set_heat_blast_and_wait_raises_the_write_nack():
+    client = _client()
+    nack = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
+    answer = asyncio.ensure_future(
+        _answer_next(client, (1, nack), (2, {Attribute.HEAT_BLAST: 0}))
+    )
+
+    with pytest.raises(NackError):
+        await client.set_heat_blast_and_wait(True, 1)
+    await answer
+
+    assert not client.futures
