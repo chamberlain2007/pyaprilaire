@@ -120,10 +120,13 @@ COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
 # this library wants for each. The device enables every channel by default
 # (spec Appendix J.1); enabled here are only the channels a `read_*`/`set_*`
 # method consumes, plus bytes 16-18 and 23, which spec J.18/J.19/J.15 name as
-# the only source for data this library supports. Byte 21 is Reserved, hence
-# `None`. `AprilaireClient.configure_cos` overrides any of it.
+# the only source for data this library supports. Bytes 0 and 26 have no
+# `read_*` method but are the only source of the SETUP 1 and IDENTIFICATION 1
+# attributes consumers read; byte 12 stays on because 0.9.1 requested it.
+# Byte 21 is Reserved, hence `None`. `AprilaireClient.configure_cos`
+# overrides any of it.
 COS_SUBSCRIPTIONS = [
-    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 0),
+    (Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS, 1),
     (Attribute.COS_CONTRACTOR_INFORMATION, 0),
     (Attribute.COS_AIR_CLEANING_INSTALLER_SETTINGS, 0),
     (Attribute.COS_HUMIDITY_CONTROL_INSTALLER_SETTINGS, 0),
@@ -135,7 +138,7 @@ COS_SUBSCRIPTIONS = [
     (Attribute.COS_AIR_CLEANING_SETTINGS, 1),
     (Attribute.COS_THERMOSTAT_IAQ_AVAILABLE, 1),
     (Attribute.COS_SCHEDULE_SETTINGS, 1),
-    (Attribute.COS_AWAY_SETTINGS, 0),
+    (Attribute.COS_AWAY_SETTINGS, 1),
     (Attribute.COS_SCHEDULE_DAY, 0),
     (Attribute.COS_SCHEDULE_HOLD, 1),
     (Attribute.COS_HEAT_BLAST, 0),
@@ -149,7 +152,7 @@ COS_SUBSCRIPTIONS = [
     (Attribute.COS_OVER_THE_AIR_ODT_UPDATE_TIMEOUT, 1),
     (Attribute.COS_THERMOSTAT_STATUS, 1),
     (Attribute.COS_IAQ_STATUS, 1),
-    (Attribute.COS_MODEL_AND_REVISION, 0),
+    (Attribute.COS_MODEL_AND_REVISION, 1),
     (Attribute.COS_SUPPORT_MODULE, 0),
     (Attribute.COS_LOCKOUTS, 0),
 ]

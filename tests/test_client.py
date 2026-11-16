@@ -617,6 +617,26 @@ def test_cos_subscriptions_previously_disabled_dependent_channels_now_enabled():
         assert DEFAULT_COS_SUBSCRIPTIONS[attribute] == 1
 
 
+def test_cos_subscriptions_keep_every_channel_0_9_1_requested():
+    for attribute in (
+        Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS,  # only source of SETUP 1
+        Attribute.COS_THERMOSTAT_SETPOINT_AND_MODE_SETTINGS,
+        Attribute.COS_DEHUMIDIFICATION_SETPOINT,
+        Attribute.COS_HUMIDIFICATION_SETPOINT,
+        Attribute.COS_FRESH_AIR_SETTING,
+        Attribute.COS_AIR_CLEANING_SETTINGS,
+        Attribute.COS_THERMOSTAT_IAQ_AVAILABLE,
+        Attribute.COS_AWAY_SETTINGS,
+        Attribute.COS_SCHEDULE_HOLD,
+        Attribute.COS_THERMOSTAT_LOCATION_AND_NAME,
+        Attribute.COS_CONTROLLING_SENSOR_VALUES,
+        Attribute.COS_THERMOSTAT_STATUS,
+        Attribute.COS_IAQ_STATUS,
+        Attribute.COS_MODEL_AND_REVISION,  # only source of IDENTIFICATION 1
+    ):
+        assert DEFAULT_COS_SUBSCRIPTIONS[attribute] == 1
+
+
 async def test_protocol_read_mac_address(protocol: _AprilaireClientProtocol):
     await protocol.read_mac_address()
 
