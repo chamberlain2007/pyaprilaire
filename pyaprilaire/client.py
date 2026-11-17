@@ -112,15 +112,6 @@ class ResponseTimeoutError(AprilaireResponseError):
         )
 
 
-# Model numbers whose outgoing frames are spaced `PACED_FRAME_INTERVAL` apart.
-# 28 is the 6003. Its automation port relays each frame to the zone panel,
-# and on the tested unit (GainSpan 4.14 firmware) back-to-back frames, such
-# as the burst sent when a connection is set up, led to dropped responses and
-# disconnects; 0.3 s between frames stopped them. The interval is what worked
-# there, not a documented minimum.
-PACED_MODEL_NUMBERS = frozenset({28})
-PACED_FRAME_INTERVAL = 0.3
-
 # How long to wait for a COS Subscriptions read response (spec 7.1) before
 # falling back to writing the desired mask unconditionally.
 COS_SUBSCRIPTIONS_READ_TIMEOUT = 5
@@ -208,7 +199,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         self.packet_queue = asyncio.Queue()
 
         self.sequence = 0
-        self.model_number: int | None = None
 
         # The most recently sent packet for each sequence number, with its
         # NACK retry count, so `_handle_nack` can attribute a NACK back to
@@ -260,16 +250,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
                             _LOGGER.debug("Sent data: %s", serialized_packet.hex(" "))
 
                             self.transport.write(serialized_packet)
-
-                            # Until IDENTIFICATION reports the model, this
-                            # could be a 6003, so the setup burst sent on
-                            # connect is paced too. Other models keep the
-                            # unpaced behavior once identified.
-                            if (
-                                self.model_number is None
-                                or self.model_number in PACED_MODEL_NUMBERS
-                            ):
-                                await asyncio.sleep(PACED_FRAME_INTERVAL)
                         except Exception:
                             _LOGGER.exception(
                                 "Failed to send packet, action=%s, "
@@ -335,9 +315,6 @@ class _AprilaireClientProtocol(asyncio.Protocol):
             if isinstance(packet, NackPacket):
                 self._handle_nack(packet)
                 continue
-
-            if Attribute.MODEL_NUMBER in packet.data:
-                self.model_number = packet.data[Attribute.MODEL_NUMBER]
 
             # A non-NACK response means the request sharing its sequence
             # number succeeded.

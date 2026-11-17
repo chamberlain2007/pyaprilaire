@@ -66,7 +66,6 @@ def test_protocol_connection_made_without_connected_action(
 
 
 async def test_protocol_queue_loop(protocol: _AprilaireClientProtocol):
-    protocol.model_number = 7
     await protocol.read_control()
     await protocol.read_scheduling()
 
@@ -84,7 +83,6 @@ async def test_protocol_queue_loop_continues_after_serialize_error(
     protocol: _AprilaireClientProtocol,
 ):
     """A packet that fails to serialize should be dropped, not kill the loop"""
-    protocol.model_number = 7
 
     # A wrong-typed value makes serialize() raise a TypeError. Note this
     # deliberately does not use a *missing* value: an absent field is a

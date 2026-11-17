@@ -1,12 +1,11 @@
 """Synthetic 6003 protocol evidence without hardware access."""
 
 import asyncio
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from pyaprilaire.client import (
-    PACED_FRAME_INTERVAL,
     AprilaireClient,
     NackError,
     _AprilaireClientProtocol,
@@ -36,21 +35,6 @@ def test_zone_system_settings_decode_count_and_limits():
     assert packet.data[Attribute.DAT_HIGH_LIMIT] == 47
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("model", [None, 28])
-async def test_identified_6003_outgoing_frames_are_paced(model):
-    protocol = _AprilaireClientProtocol(AsyncMock())
-    protocol.transport = Mock()
-    protocol.model_number = model
-    await protocol.read_control()
-    await protocol.read_sensors()
-    sleep = AsyncMock()
-    with patch("asyncio.sleep", sleep):
-        await protocol._queue_loop(loop_count=1)
-    assert protocol.transport.write.call_count == 2
-    assert [c.args for c in sleep.await_args_list].count((PACED_FRAME_INTERVAL,)) == 2
-
-
 def test_heat_blast_round_trip():
     packet = Packet(
         Action.WRITE, FunctionalDomain.SCHEDULING, 5, data={Attribute.HEAT_BLAST: 1}
@@ -77,21 +61,6 @@ def test_heat_blast_cos_decodes():
     received = next(Packet.parse(wire([5, 3, 5, 0])))
     assert received.action == Action.COS
     assert received.data[Attribute.HEAT_BLAST] == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("model", [7, 8, 9])
-async def test_identified_other_models_are_not_paced(model):
-    protocol = _AprilaireClientProtocol(AsyncMock())
-    protocol.transport = Mock()
-    protocol.model_number = model
-    await protocol.read_control()
-    await protocol.read_sensors()
-    sleep = AsyncMock()
-    with patch("asyncio.sleep", sleep):
-        await protocol._queue_loop(loop_count=1)
-    assert protocol.transport.write.call_count == 2
-    assert (PACED_FRAME_INTERVAL,) not in [c.args for c in sleep.await_args_list]
 
 
 def _client():
