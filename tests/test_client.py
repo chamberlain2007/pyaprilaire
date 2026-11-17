@@ -536,17 +536,10 @@ async def test_protocol_set_hold(protocol: _AprilaireClientProtocol):
 async def test_protocol_sync(protocol: _AprilaireClientProtocol):
     await protocol.sync()
 
-    assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.WRITE,
-            FunctionalDomain.STATUS,
-            2,
-            data={
-                Attribute.SYNCED: 1,
-            },
-        ),
-    )
+    # One byte only: real thermostats NACK the spec's 2-byte (Reserved) form.
+    packet = protocol.packet_queue.get_nowait()
+    payload = packet.serialize()[4:-1]
+    assert list(payload) == [int(Action.WRITE), int(FunctionalDomain.STATUS), 2, 1]
 
 
 def _expected_cos_raw_data(overrides: dict[Attribute, int] | None = None) -> list[int]:
@@ -964,17 +957,8 @@ async def test_client_set_air_cleaning(
 async def test_client_sync(client: AprilaireClient, protocol: _AprilaireClientProtocol):
     await client.sync()
 
-    assertPacketQueueContains(
-        protocol,
-        Packet(
-            Action.WRITE,
-            FunctionalDomain.STATUS,
-            2,
-            data={
-                Attribute.SYNCED: 1,
-            },
-        ),
-    )
+    packet = protocol.packet_queue.get_nowait()
+    assert packet.raw_data == [1]
 
 
 def _cos_read_timeout() -> ResponseTimeoutError:
