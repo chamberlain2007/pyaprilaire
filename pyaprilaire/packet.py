@@ -84,7 +84,21 @@ MAPPING = {
                 (None, None),  # 41 8476 Change Air Filter Reminder
                 (None, None),  # 42 8476 Change Water Panel Reminder
                 (None, None),  # 43 8476 Humidifier Type
-            ]
+            ],
+            # Undocumented; layout observed on a 6003 (model 28)
+            10: [
+                (None, None),  # 0
+                (None, None),  # 1
+                (Attribute.ZONE_COUNT, ValueType.INTEGER),  # 2
+                (None, None),  # 3
+                (None, None),  # 4
+                (None, None),  # 5
+                (None, None),  # 6
+                (None, None),  # 7
+                (Attribute.DAT_LOW_LIMIT, ValueType.TEMPERATURE),  # 8
+                (None, None),  # 9
+                (Attribute.DAT_HIGH_LIMIT, ValueType.TEMPERATURE),  # 10
+            ],
         },
         FunctionalDomain.CONTROL: {
             1: [
@@ -127,6 +141,9 @@ MAPPING = {
                 (Attribute.HOLD_END_DATE, ValueType.INTEGER),
                 (Attribute.HOLD_END_MONTH, ValueType.INTEGER),
                 (Attribute.HOLD_END_YEAR, ValueType.INTEGER),  # spec: add 2000
+            ],
+            5: [
+                (Attribute.HEAT_BLAST, ValueType.INTEGER),
             ],
         },
         FunctionalDomain.SENSORS: {
@@ -280,19 +297,6 @@ MAPPING = {
         },
     }
 }
-
-MAPPING[Action.READ_RESPONSE][FunctionalDomain.SETUP][10] = [
-    (None, None),
-    (None, None),
-    (Attribute.ZONE_COUNT, ValueType.INTEGER),
-    *[(None, None)] * 5,
-    (Attribute.DAT_LOW_LIMIT, ValueType.TEMPERATURE),
-    (None, None),
-    (Attribute.DAT_HIGH_LIMIT, ValueType.TEMPERATURE),
-]
-MAPPING[Action.READ_RESPONSE][FunctionalDomain.SCHEDULING][5] = [
-    (Attribute.HEAT_BLAST, ValueType.INTEGER),
-]
 
 MAPPING[Action.COS] = MAPPING[Action.READ_RESPONSE]
 MAPPING[Action.WRITE] = MAPPING[Action.READ_RESPONSE]
