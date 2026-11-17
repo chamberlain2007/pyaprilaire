@@ -567,14 +567,13 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         )
 
     async def sync(self):
-        """Send a request to sync data"""
+        """Send a request to sync data.
+
+        Only the Sync byte is sent: spec 7.2 adds a Reserved byte, but real
+        thermostats NACK it.
+        """
         await self._send_packet(
-            Packet(
-                Action.WRITE,
-                FunctionalDomain.STATUS,
-                2,
-                data={Attribute.SYNCED: 1},
-            )
+            Packet(Action.WRITE, FunctionalDomain.STATUS, 2, raw_data=[1])
         )
 
     async def read_cos_subscriptions(self):
