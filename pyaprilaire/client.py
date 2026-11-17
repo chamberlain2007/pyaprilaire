@@ -1157,34 +1157,6 @@ class AprilaireClient(SocketClient):
         """Send a request to turn Heat Blast on or off"""
         return await self.protocol.set_heat_blast(enabled)
 
-    async def set_heat_blast_and_wait(self, enabled: bool, timeout: int | None = None):
-        """Turn Heat Blast on or off, then read it back and return the result.
-
-        The read is queued behind the write, so its response reflects the
-        state after the write was handled. Raises `NackError` if the
-        thermostat NACKed the write before answering the read.
-        """
-        write_sequence = await self.set_heat_blast(enabled)
-
-        # The write itself may never get a response, so this only watches
-        # for its NACK while the read-back is outstanding.
-        write_nack = asyncio.ensure_future(
-            self.wait_for_response(
-                FunctionalDomain.SCHEDULING, 5, timeout, sequence=write_sequence
-            )
-        )
-
-        try:
-            data = await self.read_heat_blast_and_wait(timeout)
-        finally:
-            write_nack.cancel()
-            (write_outcome,) = await asyncio.gather(write_nack, return_exceptions=True)
-
-        if isinstance(write_outcome, NackError):
-            raise write_outcome
-
-        return data
-
     async def read_dehumidification_setpoint(self):
         """Send a request for the dehumidification setpoint"""
         await self.protocol.read_dehumidification_setpoint()

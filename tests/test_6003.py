@@ -1,16 +1,13 @@
 """Synthetic 6003 protocol evidence without hardware access."""
 
-import asyncio
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from pyaprilaire.client import (
-    AprilaireClient,
-    NackError,
     _AprilaireClientProtocol,
 )
-from pyaprilaire.const import Action, Attribute, FunctionalDomain, NackStatus
+from pyaprilaire.const import Action, Attribute, FunctionalDomain
 from pyaprilaire.packet import Packet
 
 
@@ -61,46 +58,3 @@ def test_heat_blast_cos_decodes():
     received = next(Packet.parse(wire([5, 3, 5, 0])))
     assert received.action == Action.COS
     assert received.data[Attribute.HEAT_BLAST] == 0
-
-
-def _client():
-    client = AprilaireClient(None, None, Mock(), 10, 10)
-    client.protocol = _AprilaireClientProtocol(client.data_received)
-    return client
-
-
-async def _answer_next(client, *responses):
-    """Feed `(sequence, data)` pairs to the client once its waits exist."""
-    await asyncio.sleep(0)
-    for sequence, data in responses:
-        await client.data_received(FunctionalDomain.SCHEDULING, 5, data, sequence)
-
-
-@pytest.mark.asyncio
-async def test_set_heat_blast_and_wait_writes_then_returns_read_back():
-    client = _client()
-    answer = asyncio.ensure_future(_answer_next(client, (2, {Attribute.HEAT_BLAST: 1})))
-
-    result = await client.set_heat_blast_and_wait(True, 1)
-    await answer
-
-    assert result == {Attribute.HEAT_BLAST: 1}
-    assert [
-        client.protocol.packet_queue.get_nowait().serialize()[4:-1] for _ in range(2)
-    ] == [bytes([1, 3, 5, 1]), bytes([2, 3, 5])]
-    assert not client.futures
-
-
-@pytest.mark.asyncio
-async def test_set_heat_blast_and_wait_raises_the_write_nack():
-    client = _client()
-    nack = NackError(NackStatus.VALUE_OUT_OF_RANGE, 0x10)
-    answer = asyncio.ensure_future(
-        _answer_next(client, (1, nack), (2, {Attribute.HEAT_BLAST: 0}))
-    )
-
-    with pytest.raises(NackError):
-        await client.set_heat_blast_and_wait(True, 1)
-    await answer
-
-    assert not client.futures
