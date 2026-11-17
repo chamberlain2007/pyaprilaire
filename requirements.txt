@@ -60,7 +60,7 @@ pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
-pre-commit==4.6.2
+pre-commit==4.7.0
     # via pyaprilaire (pyproject.toml)
 pygments==2.21.0
     # via
