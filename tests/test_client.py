@@ -610,6 +610,12 @@ def test_cos_subscriptions_previously_disabled_dependent_channels_now_enabled():
         assert DEFAULT_COS_SUBSCRIPTIONS[attribute] == 1
 
 
+def test_cos_subscriptions_enable_heat_blast():
+    # SCHEDULING 5 is mapped, so a COS for it decodes to `Attribute.HEAT_BLAST`
+    # and keeps consumers current without polling.
+    assert DEFAULT_COS_SUBSCRIPTIONS[Attribute.COS_HEAT_BLAST] == 1
+
+
 def test_cos_subscriptions_keep_every_channel_0_9_1_requested():
     for attribute in (
         Attribute.COS_INSTALLER_THERMOSTAT_SETTINGS,  # only source of SETUP 1
@@ -1321,6 +1327,18 @@ async def test_client_read_iaq_status(
             FunctionalDomain.STATUS,
             7,
             Packet(Action.READ_REQUEST, FunctionalDomain.STATUS, 7),
+        ),
+        (
+            "read_zone_system_settings_and_wait",
+            FunctionalDomain.SETUP,
+            10,
+            Packet(Action.READ_REQUEST, FunctionalDomain.SETUP, 10),
+        ),
+        (
+            "read_heat_blast_and_wait",
+            FunctionalDomain.SCHEDULING,
+            5,
+            Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 5),
         ),
     ],
 )

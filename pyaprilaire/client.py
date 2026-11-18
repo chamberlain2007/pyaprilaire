@@ -141,7 +141,7 @@ COS_SUBSCRIPTIONS = [
     (Attribute.COS_AWAY_SETTINGS, 1),
     (Attribute.COS_SCHEDULE_DAY, 0),
     (Attribute.COS_SCHEDULE_HOLD, 1),
-    (Attribute.COS_HEAT_BLAST, 0),
+    (Attribute.COS_HEAT_BLAST, 1),
     (Attribute.COS_SERVICE_REMINDERS_STATUS, 1),
     (Attribute.COS_ALERTS_STATUS, 1),
     (Attribute.COS_ALERTS_SETTINGS, 1),
@@ -614,6 +614,35 @@ class _AprilaireClientProtocol(asyncio.Protocol):
         """Send a reques for the thermostat name"""
         return await self._send_packet(
             Packet(Action.READ_REQUEST, FunctionalDomain.IDENTIFICATION, 5)
+        )
+
+    async def read_zone_system_settings(self):
+        """Send a request for the zone system settings (SETUP attribute 10).
+
+        Undocumented: attribute 10 is not in the Home Automation protocol
+        spec available to this library. The decoded fields (zone count and
+        discharge air temperature limits) come from responses captured on a
+        6003, so other models may NACK it or lay the bytes out differently.
+        """
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SETUP, 10)
+        )
+
+    async def read_heat_blast(self):
+        """Send a request for the Heat Blast state (SCHEDULING attribute 5)"""
+        return await self._send_packet(
+            Packet(Action.READ_REQUEST, FunctionalDomain.SCHEDULING, 5)
+        )
+
+    async def set_heat_blast(self, enabled: bool):
+        """Send a request to turn Heat Blast on or off"""
+        return await self._send_packet(
+            Packet(
+                Action.WRITE,
+                FunctionalDomain.SCHEDULING,
+                5,
+                data={Attribute.HEAT_BLAST: int(enabled)},
+            )
         )
 
     async def read_dehumidification_setpoint(self):
@@ -1096,6 +1125,37 @@ class AprilaireClient(SocketClient):
         return await self.wait_for_response(
             FunctionalDomain.IDENTIFICATION, 5, timeout, sequence=sequence
         )
+
+    async def read_zone_system_settings(self):
+        """Send a request for the zone system settings (SETUP attribute 10).
+
+        Undocumented and observed only on a 6003; see
+        `_AprilaireClientProtocol.read_zone_system_settings`.
+        """
+        return await self.protocol.read_zone_system_settings()
+
+    async def read_zone_system_settings_and_wait(self, timeout: int | None = None):
+        """Send a request for the zone system settings (SETUP attribute 10)
+        and wait for the response"""
+        sequence = await self.read_zone_system_settings()
+        return await self.wait_for_response(
+            FunctionalDomain.SETUP, 10, timeout, sequence=sequence
+        )
+
+    async def read_heat_blast(self):
+        """Send a request for the Heat Blast state (SCHEDULING attribute 5)"""
+        return await self.protocol.read_heat_blast()
+
+    async def read_heat_blast_and_wait(self, timeout: int | None = None):
+        """Send a request for the Heat Blast state and wait for the response"""
+        sequence = await self.read_heat_blast()
+        return await self.wait_for_response(
+            FunctionalDomain.SCHEDULING, 5, timeout, sequence=sequence
+        )
+
+    async def set_heat_blast(self, enabled: bool):
+        """Send a request to turn Heat Blast on or off"""
+        return await self.protocol.set_heat_blast(enabled)
 
     async def read_dehumidification_setpoint(self):
         """Send a request for the dehumidification setpoint"""
